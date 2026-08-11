@@ -155,6 +155,29 @@ func TestConfluencePageDeleteRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestConfluencePageDeletePurge(t *testing.T) {
+	var deletes []string // records the query for each DELETE, in order
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deletes = append(deletes, r.URL.Query().Get("purge"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	f, _, _ := newTestFactory(t, server.URL)
+	root := cmd.NewRootCmd(f)
+	root.SetArgs([]string{"confluence", "page", "delete", "12345", "--purge", "--force"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute --purge: %v", err)
+	}
+	// Purge trashes first, then deletes permanently: two DELETEs, the second
+	// carrying purge=true.
+	if len(deletes) != 2 || deletes[0] != "" || deletes[1] != "true" {
+		t.Fatalf("expected [trash, purge=true], got %v", deletes)
+	}
+}
+
 func TestConfluencePagePatchHeadingDryRun(t *testing.T) {
 	page := `{"id":"12345","title":"T","spaceId":"9","status":"current","version":{"number":4},"body":{"storage":{"value":"<h2>Status</h2><p>old</p><h2>Next</h2><p>keep</p>","representation":"storage"}}}`
 	var putSeen bool

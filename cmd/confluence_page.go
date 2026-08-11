@@ -165,32 +165,58 @@ func resolveBody(f *cmdutil.Factory, bodyFile, body string) (string, error) {
 // --- delete ---
 
 func newConfluencePageDeleteCmd(f *cmdutil.Factory) *cobra.Command {
+	var purge bool
 	cmd := &cobra.Command{
 		Use:   "delete <id>",
-		Short: "Delete a page",
-		Args:  cobra.ExactArgs(1),
+		Short: "Delete a page (move it to trash, or --purge to remove permanently)",
+		Long: `Delete a Confluence page. By default the page is moved to the space's
+trash, which is Confluence's own delete semantics and is reversible from the
+UI; the page still exists (as trashed) until purged. Pass --purge to remove
+it permanently and irreversibly (it is trashed then purged).`,
+		Args: cobra.ExactArgs(1),
 		Example: `  atl confluence page delete 12345
-  atl confluence page delete 12345 --force`,
+  atl confluence page delete 12345 --purge --force`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConfluencePageDelete(cmd.Context(), f, args[0])
+			return runConfluencePageDelete(cmd.Context(), f, args[0], purge)
 		},
 	}
+	cmd.Flags().BoolVar(&purge, "purge", false, "permanently delete the page instead of moving it to trash")
 	return cmd
 }
 
-func runConfluencePageDelete(ctx context.Context, f *cmdutil.Factory, id string) error {
-	if err := confirm(f, fmt.Sprintf("Delete page %s?", id)); err != nil {
+func runConfluencePageDelete(ctx context.Context, f *cmdutil.Factory, id string, purge bool) error {
+	action := "Move page %s to trash?"
+	if purge {
+		action = "Permanently delete page %s?"
+	}
+	if err := confirm(f, fmt.Sprintf(action, id)); err != nil {
 		return err
 	}
 	client, err := f.ClientFn()
 	if err != nil {
 		return err
 	}
-	if _, err := client.Do(ctx, "DELETE", "/wiki/api/v2/pages/"+url.PathEscape(id), nil, nil); err != nil {
-		return err
+	path := "/wiki/api/v2/pages/" + url.PathEscape(id)
+	if _, err := client.Do(ctx, "DELETE", path, nil, nil); err != nil {
+		// A purge of an already-trashed page fails the trash step; tolerate it
+		// and let the purge call below be the authoritative delete. A live
+		// page must be trashed before it can be purged, so this ordering
+		// matters. When not purging, surface the error as-is.
+		if !purge {
+			return err
+		}
+	}
+	if purge {
+		if _, err := client.Do(ctx, "DELETE", path, url.Values{"purge": {"true"}}, nil); err != nil {
+			return err
+		}
 	}
 	if !f.Quiet {
-		fmt.Fprintf(f.IOStreams.Out, "Deleted page %s\n", id)
+		if purge {
+			fmt.Fprintf(f.IOStreams.Out, "Permanently deleted page %s\n", id)
+		} else {
+			fmt.Fprintf(f.IOStreams.Out, "Moved page %s to trash (use --purge to delete permanently)\n", id)
+		}
 	}
 	return nil
 }
