@@ -1,0 +1,65 @@
+version: 2
+
+project_name: atl
+
+builds:
+  - main: .
+    binary: atl
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/branow/atlassian-cli/cmd.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+homebrew_casks:
+  - name: atl
+    repository:
+      owner: branow
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/branow/atlassian-cli
+    description: Command-line interface for Atlassian Cloud (Jira + Confluence)
+    # The binaries are not signed/notarized with an Apple Developer ID, so
+    # strip the quarantine attribute Homebrew puts on cask downloads;
+    # otherwise Gatekeeper refuses to run atl.
+    hooks:
+      post:
+        install: |
+          if File.executable?("/usr/bin/xattr")
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atl"]
+          end
+
+nfpms:
+  - package_name: atl
+    formats: [deb, rpm, apk]
+    maintainer: Orest Bodnar <branow.code@gmail.com>
+    homepage: https://github.com/branow/atlassian-cli
+    description: Command-line interface for Atlassian Cloud (Jira + Confluence)
+    license: MIT
+    bindir: /usr/bin
+
+scoops:
+  - name: atl
+    repository:
+      owner: branow
+      name: scoop-bucket
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: bucket
+    homepage: https://github.com/branow/atlassian-cli
+    description: Command-line interface for Atlassian Cloud (Jira + Confluence)
+    license: MIT
+
+changelog:
+  use: git

@@ -1,0 +1,17 @@
+# Build output
+/atl
+/dist/
+
+# Local development notes (kept out of the repo)
+/dev-notes/
+
+# Secrets and local env
+credentials.json
+*.env
+
+# Junk at any depth
+*.local
+*.test
+*.out
+*.exe
+.DS_Store
