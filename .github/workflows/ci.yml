@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      - name: catalog is current
+        run: |
+          make catalog
+          git diff --exit-code -- internal/atlapi/catalog/atlas-catalog.json
+      - name: cross-compile
+        run: |
+          GOOS=windows GOARCH=amd64 go build ./...
+          GOOS=linux GOARCH=amd64 go build ./...

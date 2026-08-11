@@ -1,0 +1,100 @@
+package atlapi
+
+import (
+	"encoding/json"
+	"strings"
+)
+
+// Response is the decoded body of a completed (2xx) REST response.
+// Atlassian endpoints return either a JSON object or a bare JSON array;
+// Body holds whichever it was, Fields exposes it as a map for the generic
+// api command (a top-level array is wrapped as {"values": [...]}), and Raw
+// keeps the untouched bytes for curated commands that decode into typed
+// structs.
+type Response struct {
+	Status int
+	Body   any
+	Fields map[string]any
+	Raw    []byte
+}
+
+// parseResponse decodes a REST response. Non-2xx statuses become *APIError;
+// a 2xx body decodes into a *Response.
+func parseResponse(statusCode int, body []byte) (*Response, error) {
+	if statusCode < 200 || statusCode > 299 {
+		return nil, &APIError{Status: statusCode, Message: errorMessage(body), Raw: body}
+	}
+
+	resp := &Response{Status: statusCode, Raw: body}
+	if len(body) == 0 {
+		resp.Fields = map[string]any{}
+		return resp, nil
+	}
+	if err := json.Unmarshal(body, &resp.Body); err != nil {
+		return nil, &APIError{Status: statusCode, Message: "response was not valid JSON", Raw: body}
+	}
+	switch v := resp.Body.(type) {
+	case map[string]any:
+		resp.Fields = v
+	case []any:
+		resp.Fields = map[string]any{"values": v}
+	default:
+		resp.Fields = map[string]any{"value": v}
+	}
+	return resp, nil
+}
+
+// errorMessage extracts a human-readable message from an Atlassian error
+// body: the first of errorMessages[], message, error, or errors — falling
+// back to the trimmed raw text.
+func errorMessage(body []byte) string {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err == nil {
+		if msgs := stringList(payload["errorMessages"]); len(msgs) > 0 {
+			return strings.Join(msgs, "; ")
+		}
+		for _, key := range []string{"message", "error", "detail", "title"} {
+			if s, ok := payload[key].(string); ok && s != "" {
+				return s
+			}
+		}
+		if errs := errorsMapValues(payload["errors"]); errs != "" {
+			return errs
+		}
+	}
+	text := strings.TrimSpace(string(body))
+	if len(text) > 500 {
+		text = text[:500]
+	}
+	return text
+}
+
+func stringList(v any) []string {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if s, ok := item.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// errorsMapValues renders Atlassian's field-keyed "errors" object (e.g.
+// {"summary": "must not be empty"}) as a single message.
+func errorsMapValues(v any) string {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for key, val := range m {
+		if s, ok := val.(string); ok && s != "" {
+			parts = append(parts, key+": "+s)
+		}
+	}
+	return strings.Join(parts, "; ")
+}
