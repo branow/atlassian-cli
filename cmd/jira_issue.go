@@ -29,8 +29,76 @@ func newJiraIssueCmd(f *cmdutil.Factory) *cobra.Command {
 		newJiraIssueEditCmd(f),
 		newJiraIssueTransitionCmd(f),
 		newJiraIssueCommentCmd(f),
+		newJiraIssuePRsCmd(f),
 	)
 	return cmd
+}
+
+// newJiraIssuePRsCmd lists the Bitbucket pull requests linked to an issue's
+// Development panel. That panel is served by /rest/dev-status, an internal
+// endpoint no documented Jira REST API covers (JSWCLOUD-16901), so the
+// command prints a one-line note to stderr that it relies on an undocumented
+// endpoint. It resolves the issue key to its numeric id (which the endpoint
+// keys on), then tries each application type until one returns linked data.
+func newJiraIssuePRsCmd(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "prs <KEY>",
+		Short: "List Bitbucket pull requests linked to an issue",
+		Long: `List the Bitbucket pull requests linked to an issue's Development panel
+(e.g. CP-48382). This reads /rest/dev-status, an internal endpoint that no
+documented Jira REST API covers, so treat it as best-effort. -o json emits the
+flattened pull-request list.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runJiraIssuePRs(cmd.Context(), f, args[0])
+		},
+	}
+	return cmd
+}
+
+func runJiraIssuePRs(ctx context.Context, f *cmdutil.Factory, key string) error {
+	// Resolve the key to the numeric id the dev-status endpoint keys on.
+	idResp, err := doJira(ctx, f, http.MethodGet, "/rest/api/3/issue/"+url.PathEscape(key), url.Values{"fields": {"id"}}, nil)
+	if err != nil {
+		return err
+	}
+	issueID, err := jira.IssueIDOf(idResp.Raw)
+	if err != nil || issueID == "" {
+		return &cmdutil.ValidationError{Message: fmt.Sprintf("could not resolve a numeric id for issue %q", key)}
+	}
+
+	if !f.Quiet {
+		fmt.Fprintln(f.IOStreams.ErrOut, "note: pull-request links come from Jira's internal dev-status endpoint (undocumented); results are best-effort")
+	}
+
+	// Try each application type; the first with linked data wins.
+	var raw []byte
+	for _, appType := range jira.DevStatusApplicationTypes {
+		path, query := jira.DevStatusPath(issueID, appType, "pullrequest")
+		resp, err := doJira(ctx, f, http.MethodGet, path, query, nil)
+		if err != nil {
+			return err
+		}
+		raw = resp.Raw
+		if jira.HasDetail(raw) {
+			break
+		}
+	}
+
+	prs, err := jira.ParsePullRequests(raw)
+	if err != nil {
+		return err
+	}
+	if wantJSON(f) {
+		return jiraAggregateJSON(f, "pullRequests", prs)
+	}
+	if len(prs) == 0 {
+		if !f.Quiet {
+			fmt.Fprintf(f.IOStreams.Out, "No pull requests linked to %s\n", key)
+		}
+		return nil
+	}
+	return jiraTable(f, jira.PullRequestColumns, prs)
 }
 
 // newJiraIssueGetCmd fetches one issue and renders its key fields. Because a
