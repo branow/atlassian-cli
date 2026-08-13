@@ -12,6 +12,7 @@ import (
 )
 
 func TestAuthLoginNonInteractiveThenStatusThenLogout(t *testing.T) {
+	t.Setenv("ATL_INSECURE", "1") // login probe talks to a loopback http server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"accountId": "123", "emailAddress": "alice@example.com"}`))
 	}))
@@ -63,6 +64,7 @@ func TestAuthLoginNonInteractiveThenStatusThenLogout(t *testing.T) {
 }
 
 func TestAuthLoginVerificationRejectsBadCredentialsWithoutStoringThem(t *testing.T) {
+	t.Setenv("ATL_INSECURE", "1") // login probe talks to a loopback http server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"errorMessages": ["Client must be authenticated"]}`))
@@ -91,6 +93,7 @@ func TestAuthLoginVerificationRejectsBadCredentialsWithoutStoringThem(t *testing
 }
 
 func TestAuthLoginInconclusiveVerificationStoresCredentialsWithWarning(t *testing.T) {
+	t.Setenv("ATL_INSECURE", "1") // login probe talks to a loopback http server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"message": "An unexpected error"}`))

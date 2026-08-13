@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/zalando/go-keyring"
 
@@ -35,6 +37,9 @@ func (s *KeyringStore) Get(profile string) (Credentials, error) {
 		return s.fallback.Get(profile)
 	}
 	if err != nil {
+		if !safeToFallback(err) {
+			return Credentials{}, keychainError("reading", err)
+		}
 		s.warnFallback(err)
 		return s.fallback.Get(profile)
 	}
@@ -48,6 +53,9 @@ func (s *KeyringStore) Set(profile string, creds Credentials) error {
 		return err
 	}
 	if err := keyring.Set(keyringService, profile, value); err != nil {
+		if !safeToFallback(err) {
+			return keychainError("storing", err)
+		}
 		s.warnFallback(err)
 		return s.fallback.Set(profile, creds)
 	}
@@ -62,6 +70,9 @@ func (s *KeyringStore) Delete(profile string) error {
 		return s.fallback.Delete(profile)
 	}
 	if err != nil {
+		if !safeToFallback(err) {
+			return keychainError("deleting", err)
+		}
 		s.warnFallback(err)
 		return s.fallback.Delete(profile)
 	}
@@ -70,6 +81,25 @@ func (s *KeyringStore) Delete(profile string) error {
 
 func (s *KeyringStore) warnFallback(cause error) {
 	fmt.Fprintf(s.streams.ErrOut, "warning: OS keychain unavailable (%v); falling back to plaintext credential storage\n", cause)
+}
+
+// safeToFallback reports whether a keyring error is a safe cue to fall back
+// to the plaintext file. Only "no keychain backend on this platform" qualifies
+// by default: a backend that is present but errored (a locked keychain, a
+// denied permission prompt, a dbus hiccup) is transient, and silently writing
+// the API token to disk in that case would leak the secret unnoticed in a
+// scripted run. Setting ATL_ALLOW_PLAINTEXT_KEYRING=1 restores the old
+// fall-back-on-any-error behavior for users who want it.
+func safeToFallback(err error) bool {
+	if errors.Is(err, keyring.ErrUnsupportedPlatform) {
+		return true
+	}
+	v := os.Getenv("ATL_ALLOW_PLAINTEXT_KEYRING")
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+func keychainError(action string, cause error) error {
+	return fmt.Errorf("OS keychain error %s credentials (set ATL_ALLOW_PLAINTEXT_KEYRING=1 to fall back to plaintext file storage): %w", action, cause)
 }
 
 func encodeCredentials(c Credentials) (string, error) {

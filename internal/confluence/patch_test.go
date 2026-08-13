@@ -77,6 +77,20 @@ func TestReplaceHeadingSection(t *testing.T) {
 			content: `<p>new</p>`,
 			wantErr: true,
 		},
+		{
+			name:    "ignores a heading-like string inside a code macro",
+			body:    `<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[<h2>Intro</h2>]]></ac:plain-text-body></ac:structured-macro><h2>Intro</h2><p>old</p>`,
+			heading: "Intro",
+			content: `<p>new</p>`,
+			want:    `<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[<h2>Intro</h2>]]></ac:plain-text-body></ac:structured-macro><h2>Intro</h2><p>new</p>`,
+		},
+		{
+			name:    "matches a heading whose text carries an entity",
+			body:    `<h2>AT&amp;T</h2><p>old</p>`,
+			heading: "AT&T",
+			content: `<p>new</p>`,
+			want:    `<h2>AT&amp;T</h2><p>new</p>`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

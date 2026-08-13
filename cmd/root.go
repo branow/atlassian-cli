@@ -96,5 +96,9 @@ func newClient(f *cmdutil.Factory) (atlapi.Client, error) {
 	if err != nil {
 		return nil, cmdutil.ErrNotLoggedIn
 	}
-	return atlapi.New("", creds), nil
+	baseURL, err := atlapi.BaseURL(creds.Site)
+	if err != nil {
+		return nil, err
+	}
+	return atlapi.New(baseURL, creds), nil
 }
