@@ -123,9 +123,10 @@ stdin) sends a full nested body. An operationId in more than one product
 (e.g. `getIssue`) is scoped by the namespaced `atl jira api` / `atl confluence
 api` or pinned with `--product`.
 
-Exit codes: `0` success · `1` generic / API business error · `2` cancelled ·
-`3` validation (bad flags, unknown op) · `4` auth failure (401/403) · `5` not
-found (404) · `6` rate-limited / unavailable.
+Exit codes: `0` success · `1` generic / API business error (including 5xx that
+is not throttling, e.g. a suspended-site 503) · `2` cancelled · `3` validation
+(bad flags, unknown op) · `4` auth failure (401/403) · `5` not found (404) ·
+`6` rate-limited (429, or a 503 carrying a `Retry-After`).
 
 ## Developing
 

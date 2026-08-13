@@ -45,17 +45,18 @@ func ExitCode(err error) int {
 	return ExitError
 }
 
-// exitCodeForAPI classifies a non-2xx REST response by its status code.
-// Atlassian conveys auth, not-found, and rate-limit conditions purely
-// through the HTTP status; a 5xx that survived the retry loop is treated
-// as a transient unavailability like a 429.
+// exitCodeForAPI classifies a non-2xx REST response. Auth and not-found are
+// read from the status; ExitRateLimited is reserved for genuine throttling
+// (a 429, or a 503 carrying a Retry-After — the APIError.RateLimited flag), so
+// a permanent 5xx like a suspended-site 503 maps to the generic ExitError and
+// a script branching on code 6 does not retry it forever.
 func exitCodeForAPI(e *atlapi.APIError) int {
 	switch {
 	case e.Status == 401 || e.Status == 403:
 		return ExitAuth
 	case e.Status == 404:
 		return ExitNotFound
-	case e.Status == 429 || e.Status >= 500:
+	case e.Status == 429 || e.RateLimited:
 		return ExitRateLimited
 	}
 	return ExitError
