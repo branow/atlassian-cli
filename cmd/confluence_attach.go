@@ -31,7 +31,11 @@ func runConfluenceAttach(ctx context.Context, f *cmdutil.Factory, pageID, file s
 	if err != nil {
 		return err
 	}
-	raw, err := uploadAttachment(ctx, siteBaseURL(creds.Site), creds, pageID, file)
+	baseURL, err := siteBaseURL(creds.Site)
+	if err != nil {
+		return err
+	}
+	raw, err := uploadAttachment(ctx, baseURL, creds, pageID, file)
 	if err != nil {
 		return err
 	}

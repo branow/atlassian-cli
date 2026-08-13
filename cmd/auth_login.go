@@ -171,8 +171,12 @@ const verifyPath = "/rest/api/3/myself"
 // host, a 5xx) is inconclusive: the credentials are stored with a warning,
 // since blocking on it would lock out otherwise-valid logins.
 func verifyLogin(ctx context.Context, f *cmdutil.Factory, creds credentials.Credentials) error {
-	client := atlapi.New("", creds)
-	_, err := client.Do(ctx, http.MethodGet, verifyPath, nil, nil)
+	baseURL, err := atlapi.BaseURL(creds.Site)
+	if err != nil {
+		return err
+	}
+	client := atlapi.New(baseURL, creds)
+	_, err = client.Do(ctx, http.MethodGet, verifyPath, nil, nil)
 	if err == nil {
 		return nil
 	}

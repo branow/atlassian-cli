@@ -12,8 +12,51 @@ import (
 	"testing"
 
 	"github.com/branow/atlassian-cli/internal/atlapi"
+	"github.com/branow/atlassian-cli/internal/atlapi/catalog"
 	"github.com/branow/atlassian-cli/internal/credentials"
 )
+
+func TestRouteExpandsArrayQueryIntoRepeatedKeys(t *testing.T) {
+	op := catalog.Operation{
+		ID:     "listBoards",
+		Method: http.MethodGet,
+		Path:   "/rest/agile/1.0/board",
+		Query:  []catalog.Field{{Name: "id"}, {Name: "maxResults"}, {Name: "done"}},
+	}
+	_, _, query, _, err := atlapi.Route(op, map[string]any{
+		"id":         []any{1, "TEST-2", 3},
+		"maxResults": 42,
+		"done":       true,
+	})
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if got := query["id"]; len(got) != 3 || got[0] != "1" || got[1] != "TEST-2" || got[2] != "3" {
+		t.Errorf("array param must expand into repeated keys, got id=%v", got)
+	}
+	if got := query.Get("maxResults"); got != "42" {
+		t.Errorf("number param must render as its literal, got maxResults=%q", got)
+	}
+	if got := query.Get("done"); got != "true" {
+		t.Errorf("bool param must render as true/false, got done=%q", got)
+	}
+}
+
+func TestBaseURLRejectsCleartextHTTP(t *testing.T) {
+	if _, err := atlapi.BaseURL("http://acme.atlassian.net"); err == nil {
+		t.Error("http:// base URL must be rejected without ATL_INSECURE")
+	}
+	if got, err := atlapi.BaseURL("acme.atlassian.net"); err != nil || got != "https://acme.atlassian.net" {
+		t.Errorf("bare host must default to https, got %q err %v", got, err)
+	}
+	if got, err := atlapi.BaseURL("https://acme.atlassian.net/"); err != nil || got != "https://acme.atlassian.net" {
+		t.Errorf("https host must pass through trimmed, got %q err %v", got, err)
+	}
+	t.Setenv("ATL_INSECURE", "1")
+	if got, err := atlapi.BaseURL("http://127.0.0.1:8080"); err != nil || got != "http://127.0.0.1:8080" {
+		t.Errorf("ATL_INSECURE must allow http, got %q err %v", got, err)
+	}
+}
 
 func testCreds() credentials.Credentials {
 	return credentials.Credentials{Site: "acme.atlassian.net", Email: "alice@example.com", APIToken: "t0ken"}

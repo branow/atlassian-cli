@@ -87,14 +87,12 @@ func clientCredentials(f *cmdutil.Factory) (credentials.Credentials, error) {
 	return creds, nil
 }
 
-// siteBaseURL turns a stored site host into a scheme+host base URL, adding
-// https:// unless the host already carries a scheme (matching atlapi.New, so
-// a locally overridden http host still works).
-func siteBaseURL(site string) string {
-	if strings.HasPrefix(site, "http://") || strings.HasPrefix(site, "https://") {
-		return strings.TrimRight(site, "/")
-	}
-	return "https://" + strings.TrimRight(site, "/")
+// siteBaseURL turns a stored site host into a scheme+host base URL, rejecting
+// cleartext http:// (unless ATL_INSECURE is set) the same way the JSON client
+// does — the attachment uploader sends the same Basic-auth token, so it must
+// not fall through to HTTP either.
+func siteBaseURL(site string) (string, error) {
+	return atlapi.BaseURL(site)
 }
 
 // resolveContent interprets a --content/replacement-body value: "-" reads all

@@ -17,6 +17,7 @@ package confluence
 
 import (
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 )
@@ -89,6 +90,29 @@ var headingRe = regexp.MustCompile(`(?is)<h([1-6])\b[^>]*>(.*?)</h[1-6]>`)
 // requested heading name.
 var tagRe = regexp.MustCompile(`(?s)<[^>]*>`)
 
+// opaqueRe matches regions whose contents are literal text, not markup:
+// CDATA sections and the body of a code macro (ac:plain-text-body). An
+// <h2>-looking string inside one of these is content, not a heading, so
+// heading selectors must not see it.
+var opaqueRe = regexp.MustCompile(`(?is)<!\[CDATA\[.*?\]\]>|<ac:plain-text-body\b[^>]*>.*?</ac:plain-text-body>`)
+
+// maskOpaqueRegions returns a copy of body with every CDATA section and
+// code-macro body overwritten by spaces of the same byte length, so offsets
+// still index into the original body while heading selectors run over markup
+// with the literal-text regions blanked out.
+func maskOpaqueRegions(body string) string {
+	return opaqueRe.ReplaceAllStringFunc(body, func(m string) string {
+		return strings.Repeat(" ", len(m))
+	})
+}
+
+// headingText reduces a heading element's inner markup to the visible text a
+// reader sees: tags stripped and HTML entities decoded (so a heading stored as
+// "AT&amp;T" matches the name "AT&T"), trimmed and lowercased for comparison.
+func headingText(markup string) string {
+	return strings.TrimSpace(strings.ToLower(html.UnescapeString(tagRe.ReplaceAllString(markup, ""))))
+}
+
 // ReplaceHeadingSection replaces the content beneath the first heading whose
 // visible text matches name (trimmed, case-insensitive) with content. The
 // section runs from just after that heading's closing tag up to — but not
@@ -97,18 +121,21 @@ var tagRe = regexp.MustCompile(`(?s)<[^>]*>`)
 // heading element itself is preserved; only what it introduces is replaced,
 // which is what "the section under this heading" means to a reader.
 func ReplaceHeadingSection(body, name, content string) (string, error) {
-	matches := headingRe.FindAllStringSubmatchIndex(body, -1)
+	// Match headings over a mask where CDATA/code-macro bodies are blanked, so
+	// a heading-like string inside a code block is not mistaken for a real
+	// heading. The mask preserves byte offsets, so indices index into body.
+	matches := headingRe.FindAllStringSubmatchIndex(maskOpaqueRegions(body), -1)
 
 	type h struct {
 		level              int
 		elemStart, elemEnd int
 	}
 	var headings []h
-	target := strings.TrimSpace(strings.ToLower(name))
+	target := strings.TrimSpace(strings.ToLower(html.UnescapeString(name)))
 	matchIdx := -1
 	for _, m := range matches {
 		level := int(body[m[2]] - '0') // single digit 1..6 from group 1
-		text := strings.TrimSpace(strings.ToLower(tagRe.ReplaceAllString(body[m[4]:m[5]], "")))
+		text := headingText(body[m[4]:m[5]])
 		headings = append(headings, h{level: level, elemStart: m[0], elemEnd: m[1]})
 		if matchIdx == -1 && text == target {
 			matchIdx = len(headings) - 1
