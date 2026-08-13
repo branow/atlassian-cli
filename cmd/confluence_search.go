@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"strconv"
 
@@ -50,15 +52,30 @@ func runConfluenceSearch(ctx context.Context, f *cmdutil.Factory, cql string, li
 	if limit > 0 && !paginate {
 		query.Set("limit", strconv.Itoa(limit))
 	}
-	items, err := confluence.CollectPages(pathWithQuery("/wiki/rest/api/search", query), limit, paginate, fetchRaw(ctx, client))
-	if err != nil {
-		return err
+	items, collectErr := confluence.CollectPages(pathWithQuery("/wiki/rest/api/search", query), limit, paginate, fetchRaw(ctx, client))
+	// Emit collected pages first — always on success, and on a mid-pagination
+	// failure whenever some pages were fetched — so a partial failure still
+	// yields the results already in hand rather than an empty stdout.
+	if collectErr == nil || len(items) > 0 {
+		if err := emitSearchResults(f, items); err != nil {
+			return err
+		}
 	}
+	if collectErr != nil {
+		if len(items) > 0 {
+			fmt.Fprintf(f.IOStreams.ErrOut, "warning: emitted %d partial result(s) before pagination failed: %v\n", len(items), collectErr)
+		}
+		return collectErr
+	}
+	return nil
+}
+
+// emitSearchResults renders collected raw search items as JSON or a table.
+func emitSearchResults(f *cmdutil.Factory, items []json.RawMessage) error {
 	merged, err := confluence.MergeResults(items)
 	if err != nil {
 		return err
 	}
-
 	if f.OutputFormat() == "json" {
 		return writeRawJSON(f, merged)
 	}
