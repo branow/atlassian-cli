@@ -8,6 +8,7 @@ import (
 
 	"github.com/branow/atlassian-cli/cmd"
 	"github.com/branow/atlassian-cli/internal/cmdutil"
+	"github.com/branow/atlassian-cli/internal/config"
 	"github.com/branow/atlassian-cli/internal/credentials"
 )
 
@@ -168,5 +169,36 @@ func TestAuthSwitchRequiresExistingProfile(t *testing.T) {
 	}
 	if got := cmdutil.ExitCode(err); got != cmdutil.ExitValidation {
 		t.Errorf("got exit code %d, want %d", got, cmdutil.ExitValidation)
+	}
+}
+
+func TestAuthStatusListsAllProfilesWithActiveMarked(t *testing.T) {
+	f, out, _ := newTestFactory(t, "http://example.invalid")
+	// The factory seeds a logged-in "default"; add a second logged-in profile.
+	f.Config.SetProfile("sandbox", config.Profile{Site: "sandbox.atlassian.net", Email: "bob@example.com"})
+	f.CredentialsStore.Set("sandbox", credentials.Credentials{
+		Site: "sandbox.atlassian.net", Email: "bob@example.com", APIToken: "t0ken",
+	})
+
+	root := cmd.NewRootCmd(f)
+	root.SetArgs([]string{"auth", "status"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "default") || !strings.Contains(got, "sandbox") {
+		t.Errorf("expected both profiles listed, got:\n%s", got)
+	}
+	if !strings.Contains(got, "bob@example.com") {
+		t.Errorf("expected the sandbox email listed, got:\n%s", got)
+	}
+	// The active profile ("default") is marked; sandbox is not.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "default") && !strings.Contains(line, "*") {
+			t.Errorf("expected the active profile marked with *, got line: %q", line)
+		}
+		if strings.Contains(line, "sandbox") && strings.Contains(line, "*") {
+			t.Errorf("expected the inactive profile unmarked, got line: %q", line)
+		}
 	}
 }
