@@ -2,6 +2,7 @@ package atlapi
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 )
 
@@ -18,11 +19,17 @@ type Response struct {
 	Raw    []byte
 }
 
-// parseResponse decodes a REST response. Non-2xx statuses become *APIError;
-// a 2xx body decodes into a *Response.
-func parseResponse(statusCode int, body []byte) (*Response, error) {
+// parseResponse decodes a REST response. Non-2xx statuses become *APIError
+// (flagged rate-limited when the status and headers say so); a 2xx body decodes
+// into a *Response.
+func parseResponse(statusCode int, header http.Header, body []byte) (*Response, error) {
 	if statusCode < 200 || statusCode > 299 {
-		return nil, &APIError{Status: statusCode, Message: errorMessage(body), Raw: body}
+		return nil, &APIError{
+			Status:      statusCode,
+			Message:     errorMessage(body),
+			Raw:         body,
+			RateLimited: isRateLimited(statusCode, header),
+		}
 	}
 
 	resp := &Response{Status: statusCode, Raw: body}
@@ -42,6 +49,23 @@ func parseResponse(statusCode int, body []byte) (*Response, error) {
 		resp.Fields = map[string]any{"value": v}
 	}
 	return resp, nil
+}
+
+// isRateLimited reports whether a non-2xx response is a throttling signal to
+// back off and retry rather than a hard failure. A 429 always is. Atlassian
+// also returns 503 both for transient overload (with a Retry-After header) and
+// for permanent conditions like a deactivated site (without one), so a 503
+// counts only when it carries a Retry-After.
+func isRateLimited(status int, header http.Header) bool {
+	if status == http.StatusTooManyRequests {
+		return true
+	}
+	if status == http.StatusServiceUnavailable && header != nil {
+		if _, ok := parseRetryAfter(header.Get("Retry-After")); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // errorMessage extracts a human-readable message from an Atlassian error

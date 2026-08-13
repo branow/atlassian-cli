@@ -135,7 +135,7 @@ func (c *HTTPClient) Do(ctx context.Context, method, path string, query url.Valu
 	if err != nil {
 		return nil, err
 	}
-	return parseResponse(resp.StatusCode, responseBody)
+	return parseResponse(resp.StatusCode, resp.Header, responseBody)
 }
 
 // Route computes the concrete request for an operation and its fields: path

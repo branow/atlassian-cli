@@ -12,6 +12,11 @@ type APIError struct {
 	Status  int
 	Message string
 	Raw     []byte
+	// RateLimited marks a response the caller should treat as throttling and
+	// back off on: a 429, or a 503 carrying a Retry-After header. It is false
+	// for other 5xx (e.g. a 503 for a permanently suspended site), so callers
+	// can tell a retry-worthy condition from a hard failure by status alone.
+	RateLimited bool
 }
 
 func (e *APIError) Error() string {
