@@ -52,12 +52,83 @@ func TestCollectPages(t *testing.T) {
 }
 
 // TestCollectPagesPropagatesFetchError surfaces a fetch failure rather than
-// swallowing it or returning a partial page.
+// swallowing it.
 func TestCollectPagesPropagatesFetchError(t *testing.T) {
 	want := fmt.Errorf("boom")
 	_, err := CollectPages("/x", 0, false, func(string) ([]byte, error) { return nil, want })
 	if err != want {
 		t.Fatalf("got %v, want %v", err, want)
+	}
+}
+
+// TestCollectPagesReturnsPartialOnFailure keeps the pages already fetched when
+// a later page fails, so the caller can degrade gracefully instead of losing
+// everything.
+func TestCollectPagesReturnsPartialOnFailure(t *testing.T) {
+	boom := fmt.Errorf("boom")
+	fetch := func(path string) ([]byte, error) {
+		if path == "/first" {
+			return []byte(`{"results":[{"id":"1"}],"_links":{"next":"/second"}}`), nil
+		}
+		return nil, boom
+	}
+	items, err := CollectPages("/first", 0, true, fetch)
+	if err != boom {
+		t.Fatalf("got err %v, want %v", err, boom)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d partial items, want 1 (the first page)", len(items))
+	}
+}
+
+// TestCollectPagesResolvesV1WikiContext reproduces the v1 search bug: its
+// _links.next is relative to the /wiki context path, so the follow-up must be
+// re-rooted at /wiki rather than sent to the bare site.
+func TestCollectPagesResolvesV1WikiContext(t *testing.T) {
+	pages := map[string]string{
+		"/wiki/rest/api/search": `{"results":[{"id":"1"}],"_links":{` +
+			`"base":"https://acme.atlassian.net/wiki","context":"/wiki",` +
+			`"next":"/rest/api/search?cql=type=page&start=25"}}`,
+		"/wiki/rest/api/search?cql=type=page&start=25": `{"results":[{"id":"2"}]}`,
+	}
+	var fetched []string
+	fetch := func(path string) ([]byte, error) {
+		fetched = append(fetched, path)
+		body, ok := pages[path]
+		if !ok {
+			return nil, fmt.Errorf("unexpected fetch path %q (dropped /wiki?)", path)
+		}
+		return []byte(body), nil
+	}
+	items, err := CollectPages("/wiki/rest/api/search", 0, true, fetch)
+	if err != nil {
+		t.Fatalf("CollectPages: %v", err)
+	}
+	if len(items) != 2 {
+		t.Errorf("got %d items, want 2 across both pages: %v", len(items), items)
+	}
+}
+
+// TestResolveNextPath covers the v1/v2 next-link shapes directly.
+func TestResolveNextPath(t *testing.T) {
+	cases := []struct {
+		name                string
+		next, base, context string
+		want                string
+	}{
+		{"v1 relative next gains /wiki context", "/rest/api/search?start=25", "https://x/wiki", "/wiki", "/wiki/rest/api/search?start=25"},
+		{"v2 next already rooted is untouched", "/wiki/api/v2/spaces?cursor=a", "", "", "/wiki/api/v2/spaces?cursor=a"},
+		{"context derived from base when absent", "/rest/api/search?start=25", "https://x/wiki", "", "/wiki/rest/api/search?start=25"},
+		{"absolute next reduced to host-relative path", "https://x/wiki/rest/api/search?start=25", "", "", "/wiki/rest/api/search?start=25"},
+		{"already-prefixed relative next not doubled", "/wiki/rest/api/search?start=25", "", "/wiki", "/wiki/rest/api/search?start=25"},
+		{"empty next stays empty", "", "https://x/wiki", "/wiki", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveNextPath(tc.next, tc.base, tc.context); got != tc.want {
+				t.Errorf("resolveNextPath = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
