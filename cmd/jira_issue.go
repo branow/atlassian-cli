@@ -253,7 +253,11 @@ func newJiraIssueEditCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:   "edit <KEY>",
 		Short: "Edit an issue",
 		Long: `Update fields on an issue. Only the flags you pass are changed.
---description is stored as ADF; -f field=value sets additional fields.`,
+--description is stored as ADF; -f field=value sets additional fields. Object
+fields take a bare value (-f priority=High becomes {"name":"High"}); pass raw
+JSON for other shapes (-f 'labels=["a","b"]'). The update is atomic: if the API
+rejects any one field the whole call fails and nothing (including --summary) is
+applied.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fields := map[string]any{}
@@ -407,12 +411,15 @@ func requireFlags(values map[string]string) error {
 }
 
 // mergeFields parses -f key=value pairs (reusing the generic api command's
-// JSON-typed value parsing) into an existing fields object.
+// JSON-typed value parsing) into an existing fields object, then wraps bare
+// values for Jira's object fields (priority, assignee, ...) into the shape the
+// API expects via jira.CoerceFields.
 func mergeFields(fields map[string]any, pairs []string) error {
 	parsed, err := parseFields(pairs)
 	if err != nil {
 		return err
 	}
+	jira.CoerceFields(parsed)
 	for k, v := range parsed {
 		fields[k] = v
 	}
