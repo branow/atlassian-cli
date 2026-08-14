@@ -349,18 +349,39 @@ var transitionColumns = []jira.Column[jira.Transition]{
 	}},
 }
 
-// newJiraIssueCommentCmd adds a comment, wrapping the text as ADF.
+// newJiraIssueCommentCmd adds a comment, wrapping the text as ADF. Plain
+// --body stays a literal paragraph; --markdown opts into inline formatting,
+// [text](url) links, and @[name] mentions (resolved to accounts via user
+// search) without changing the default's behavior.
 func newJiraIssueCommentCmd(f *cmdutil.Factory) *cobra.Command {
 	var body string
+	var markdown bool
 	cmd := &cobra.Command{
 		Use:   "comment <KEY>",
 		Short: "Add a comment to an issue",
-		Args:  cobra.ExactArgs(1),
+		Long: `Add a comment to an issue.
+
+By default --body is stored verbatim as a plain-text ADF paragraph. Pass
+--markdown to interpret it as lightweight markdown:
+
+  **bold**  *italic*  ` + "`code`" + `      inline marks
+  [text](https://example.com)      link
+  @[Jane Doe] or @[jane@acme.com]  mention (resolved to an account)
+
+Blank lines separate paragraphs; single newlines become line breaks. Each
+distinct mention query is resolved through user search and must match exactly
+one active user (or one exact name/email); ambiguous queries are reported so
+you can qualify them.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if body == "" {
 				return &cmdutil.ValidationError{Message: "--body is required"}
 			}
-			payload := map[string]any{"body": jira.Document(body)}
+			doc, err := commentBody(cmd.Context(), f, body, markdown)
+			if err != nil {
+				return err
+			}
+			payload := map[string]any{"body": doc}
 			resp, err := doJira(cmd.Context(), f, http.MethodPost, "/rest/api/3/issue/"+url.PathEscape(args[0])+"/comment", nil, payload)
 			if err != nil {
 				return err
@@ -372,7 +393,45 @@ func newJiraIssueCommentCmd(f *cmdutil.Factory) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&body, "body", "", "comment text (stored as ADF)")
+	cmd.Flags().BoolVar(&markdown, "markdown", false, "interpret --body as markdown (marks, [text](url) links, @[name] mentions)")
 	return cmd
+}
+
+// commentBody builds the ADF body for a comment: the verbatim single
+// paragraph for plain text, or a markdown conversion with every @[name]
+// mention resolved to an account when --markdown is set.
+func commentBody(ctx context.Context, f *cmdutil.Factory, body string, markdown bool) (map[string]any, error) {
+	if !markdown {
+		return jira.Document(body), nil
+	}
+	mentions := map[string]jira.Mention{}
+	for _, q := range jira.MentionQueries(body) {
+		m, err := resolveMention(ctx, f, q)
+		if err != nil {
+			return nil, err
+		}
+		mentions[q] = m
+	}
+	return jira.MarkdownDocument(body, mentions), nil
+}
+
+// resolveMention turns a mention query (display name or email) into the
+// account a mention node needs, searching Jira users and requiring an
+// unambiguous match.
+func resolveMention(ctx context.Context, f *cmdutil.Factory, query string) (jira.Mention, error) {
+	resp, err := doJira(ctx, f, http.MethodGet, "/rest/api/3/user/search", url.Values{"query": {query}}, nil)
+	if err != nil {
+		return jira.Mention{}, err
+	}
+	var users []jira.User
+	if err := json.Unmarshal(resp.Raw, &users); err != nil {
+		return jira.Mention{}, err
+	}
+	user, err := jira.PickUser(users, query)
+	if err != nil {
+		return jira.Mention{}, &cmdutil.ValidationError{Message: err.Error()}
+	}
+	return jira.Mention{AccountID: user.AccountID, Display: user.DisplayName}, nil
 }
 
 // doJira fetches the client for the active profile and performs one request.

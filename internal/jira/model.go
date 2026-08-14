@@ -18,8 +18,9 @@ type NamedRef struct {
 
 // User is the subset of a Jira user object the curated commands display.
 type User struct {
-	AccountID   string `json:"accountId,omitempty"`
-	DisplayName string `json:"displayName,omitempty"`
+	AccountID    string `json:"accountId,omitempty"`
+	DisplayName  string `json:"displayName,omitempty"`
+	EmailAddress string `json:"emailAddress,omitempty"`
 }
 
 // Issue is the subset of a Jira issue the curated commands read. Fields

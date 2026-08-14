@@ -71,6 +71,7 @@ atl jira issue create --project PROJ --type Task --summary "Do the thing"
 atl jira issue edit PROJ-123 -f priority=High
 atl jira issue transition PROJ-123 --to "In Progress"
 atl jira issue comment PROJ-123 --body "on it"
+atl jira issue comment PROJ-123 --markdown --body "shipped in [PR](https://x/42), @[Jane Doe] please verify"
 atl jira issue prs PROJ-123       # linked Bitbucket pull requests
 atl jira project ls
 atl jira board ls --project PROJ

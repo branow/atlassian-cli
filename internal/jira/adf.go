@@ -40,6 +40,13 @@ func walkADF(node any, b *strings.Builder) {
 		if nodeType == "hardBreak" {
 			b.WriteString("\n")
 		}
+		if nodeType == "mention" {
+			if attrs, ok := n["attrs"].(map[string]any); ok {
+				if txt, ok := attrs["text"].(string); ok {
+					b.WriteString(txt)
+				}
+			}
+		}
 		if text, ok := n["text"].(string); ok {
 			b.WriteString(text)
 		}
