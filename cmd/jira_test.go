@@ -460,6 +460,55 @@ func TestJiraIssueCommentSendsADF(t *testing.T) {
 	}
 }
 
+func TestJiraIssueCommentMarkdownResolvesMention(t *testing.T) {
+	srv := &recordingServer{routes: map[string]string{
+		"GET /rest/api/3/user/search":           `[{"accountId":"abc-123","displayName":"Jane Doe"}]`,
+		"POST /rest/api/3/issue/PROJ-1/comment": `{"id":"10000"}`,
+	}}
+	server := httptest.NewServer(srv)
+	defer server.Close()
+
+	out, err := runJira(t, server.URL, "jira", "issue", "comment", "PROJ-1",
+		"--markdown", "--body", "see [PR](https://x.test) @[Jane Doe]")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if srv.requests != 2 {
+		t.Fatalf("expected user search then comment (2 requests), got %d", srv.requests)
+	}
+	// The posted body must carry a mention node with the resolved accountId
+	// and a link node, proving markdown + resolution reached the payload.
+	raw, _ := json.Marshal(srv.gotBody["body"])
+	for _, want := range []string{`"type":"mention"`, `"id":"abc-123"`, `"type":"link"`, `"href":"https://x.test"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("posted body missing %s:\n%s", want, raw)
+		}
+	}
+	if !strings.Contains(out, "Commented on PROJ-1") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestJiraIssueCommentMarkdownAmbiguousMentionFails(t *testing.T) {
+	srv := &recordingServer{routes: map[string]string{
+		"GET /rest/api/3/user/search": `[{"accountId":"1","displayName":"Jane Doe"},{"accountId":"2","displayName":"Jane Doe"}]`,
+	}}
+	server := httptest.NewServer(srv)
+	defer server.Close()
+
+	_, err := runJira(t, server.URL, "jira", "issue", "comment", "PROJ-1",
+		"--markdown", "--body", "hi @[Jane]")
+	if err == nil {
+		t.Fatal("expected an error for an ambiguous mention")
+	}
+	if cmdutil.ExitCode(err) != cmdutil.ExitValidation {
+		t.Errorf("exit code = %d, want validation", cmdutil.ExitCode(err))
+	}
+	if srv.requests != 1 {
+		t.Errorf("must not POST a comment when resolution fails, got %d requests", srv.requests)
+	}
+}
+
 func TestJiraProjectList(t *testing.T) {
 	srv := &recordingServer{routes: map[string]string{
 		"GET /rest/api/3/project/search": `{"values":[{"id":"10000","key":"PROJ","name":"Project X","projectTypeKey":"software"}]}`,
