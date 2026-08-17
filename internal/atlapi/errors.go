@@ -4,10 +4,9 @@ import "fmt"
 
 // APIError is a non-2xx REST response from Atlassian Cloud. Atlassian
 // signals both transport/auth failures and business-rule rejections via the
-// HTTP status plus an error body, so this one type covers them all (unlike
-// exigo's split of HTTP vs business errors). Message is the best-effort
-// human text pulled from the body; Raw is the untouched body for callers
-// that need the full error envelope.
+// HTTP status plus an error body, so this one type covers them all. Message
+// is the best-effort human text pulled from the body; Raw is the untouched
+// body for callers that need the full error envelope.
 type APIError struct {
 	Status  int
 	Message string
