@@ -10,7 +10,7 @@ import (
 
 // version is the atl release version. It is a plain variable rather than
 // build-time ldflags injection for this iteration.
-var version = "0.1.3"
+var version = "0.1.4"
 
 // newVersionCmd builds "atl version".
 func newVersionCmd(f *cmdutil.Factory) *cobra.Command {
