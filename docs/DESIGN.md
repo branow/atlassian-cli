@@ -131,7 +131,7 @@ atl confluence page get|create|patch|delete
 atl confluence search <cql>
 atl confluence attach <pageId> <file>
 atl confluence comment add <pageId> [--inline --select <text>]
-atl jira issue get|list|create|edit|transition|comment
+atl jira issue get|list|create|edit|transition|comment|attach
 atl jira project ls
 atl jira board ls
 atl jira sprint ls|get
