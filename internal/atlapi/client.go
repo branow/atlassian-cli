@@ -36,6 +36,10 @@ type Client interface {
 	// Do is the lower-level escape hatch curated commands use directly:
 	// method and a full post-host path, with an explicit query and body.
 	Do(ctx context.Context, method, path string, query url.Values, body any) (*Response, error)
+	// Download GETs a post-host path that answers with raw bytes rather
+	// than JSON (attachment contents, thumbnails), returning the body
+	// unread for the caller to stream and close.
+	Download(ctx context.Context, path string) (*Download, error)
 }
 
 // HTTPClient is the real Client implementation, sending JSON requests to a
@@ -44,6 +48,9 @@ type HTTPClient struct {
 	baseURL    string
 	creds      credentials.Credentials
 	httpClient *http.Client
+	// downloadClient serves Download: no whole-request timeout and a
+	// redirect policy that drops credentials off-host. See newDownloadClient.
+	downloadClient *http.Client
 }
 
 // New returns an HTTPClient. baseURL is the scheme+host prefix (e.g.
@@ -56,9 +63,10 @@ func New(baseURL string, creds credentials.Credentials) *HTTPClient {
 		baseURL = "https://" + strings.TrimPrefix(strings.TrimPrefix(creds.Site, "https://"), "http://")
 	}
 	return &HTTPClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		creds:      creds,
-		httpClient: &http.Client{Timeout: requestTimeout},
+		baseURL:        strings.TrimRight(baseURL, "/"),
+		creds:          creds,
+		httpClient:     &http.Client{Timeout: requestTimeout},
+		downloadClient: newDownloadClient(),
 	}
 }
 
@@ -253,15 +261,27 @@ func queryValue(value any) string {
 }
 
 func (c *HTTPClient) doWithRetry(ctx context.Context, method, requestURL string, body []byte) (*http.Response, error) {
+	return c.retrying(ctx, method, func() (*http.Response, error) {
+		return c.attempt(ctx, method, requestURL, body)
+	})
+}
+
+// retrying runs attempt under the shared retry policy: up to maxAttempts
+// tries, backing off between them and closing the discarded response each
+// time. It takes the attempt as a function so the JSON and download paths
+// share one policy despite building different requests with different
+// http.Clients. The returned response's body is unread, so a streaming
+// caller can hand it straight to the consumer.
+func (c *HTTPClient) retrying(ctx context.Context, method string, attempt func() (*http.Response, error)) (*http.Response, error) {
 	var resp *http.Response
 	var err error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		resp, err = c.attempt(ctx, method, requestURL, body)
-		lastAttempt := attempt == maxAttempts-1
+	for try := 0; try < maxAttempts; try++ {
+		resp, err = attempt()
+		lastAttempt := try == maxAttempts-1
 		if !shouldRetry(method, resp, err) || lastAttempt {
 			return resp, err
 		}
-		delay := retryDelay(resp, attempt)
+		delay := retryDelay(resp, try)
 		if resp != nil {
 			resp.Body.Close()
 		}

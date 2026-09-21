@@ -125,8 +125,8 @@ func TestResolveNextPath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveNextPath(tc.next, tc.base, tc.context); got != tc.want {
-				t.Errorf("resolveNextPath = %q, want %q", got, tc.want)
+			if got := resolveLinkPath(tc.next, tc.base, tc.context); got != tc.want {
+				t.Errorf("resolveLinkPath = %q, want %q", got, tc.want)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package confluence
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -103,4 +104,77 @@ func attachmentErrorMessage(body []byte) string {
 		text = text[:500]
 	}
 	return text
+}
+
+// AttachmentsPath lists a page's attachments (v2). AttachmentByIDPath reads
+// one attachment's metadata, including the link serving its bytes.
+const (
+	AttachmentsPath    = "/wiki/api/v2/pages/%s/attachments"
+	AttachmentByIDPath = "/wiki/api/v2/attachments/%s"
+)
+
+// wikiContext is the path Confluence Cloud is mounted under. A v2
+// attachment's downloadLink is relative to it, and the response does not
+// always carry the _links.base naming it, so this is the fallback root.
+const wikiContext = "/wiki"
+
+// Attachment is the subset of a v2 attachment the curated commands render
+// and download. DownloadLink is a site-relative URL (e.g.
+// /download/attachments/123/report.xlsx?version=1) rather than a path the
+// client can use as-is; DownloadPath reconciles it.
+type Attachment struct {
+	ID           FlexString `json:"id"`
+	Title        string     `json:"title"`
+	MediaType    string     `json:"mediaType"`
+	FileSize     int64      `json:"fileSize"`
+	PageID       FlexString `json:"pageId"`
+	Status       string     `json:"status"`
+	DownloadLink string     `json:"downloadLink"`
+	Links        struct {
+		Base     string `json:"base"`
+		Download string `json:"download"`
+	} `json:"_links"`
+}
+
+// DownloadPath returns the post-host path serving the attachment's bytes,
+// or "" when the response carried no download link. The link is relative to
+// the /wiki context — the same mismatch that made paginated search drop the
+// prefix — so it is resolved against _links.base and defaulted to /wiki.
+func (a *Attachment) DownloadPath() string {
+	link := a.DownloadLink
+	if link == "" {
+		link = a.Links.Download
+	}
+	if link == "" {
+		return ""
+	}
+	path := resolveLinkPath(link, a.Links.Base, "")
+	if !hasPathPrefix(path, wikiContext) {
+		path = wikiContext + path
+	}
+	return path
+}
+
+// AttachmentList is the v2 list envelope for a page's attachments.
+type AttachmentList struct {
+	Results []Attachment `json:"results"`
+}
+
+// ParseAttachmentList decodes a v2 attachments page (or a merged set of
+// pages from CollectPages).
+func ParseAttachmentList(raw []byte) (*AttachmentList, error) {
+	var list AttachmentList
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, fmt.Errorf("decoding attachments response: %w", err)
+	}
+	return &list, nil
+}
+
+// ParseAttachment decodes a single v2 attachment response.
+func ParseAttachment(raw []byte) (*Attachment, error) {
+	var att Attachment
+	if err := json.Unmarshal(raw, &att); err != nil {
+		return nil, fmt.Errorf("decoding attachment response: %w", err)
+	}
+	return &att, nil
 }

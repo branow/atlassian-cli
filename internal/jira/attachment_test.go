@@ -51,3 +51,41 @@ func TestBuildAttachmentRequest(t *testing.T) {
 		t.Errorf("got file content %q, want hello", content)
 	}
 }
+
+func TestParseIssueAttachments(t *testing.T) {
+	raw := []byte(`{"key":"PROJ-1","fields":{"attachment":[
+		{"id":"12345","filename":"report.xlsx","size":133223,"mimeType":"application/vnd.ms-excel","created":"2026-01-02T03:04:05.000+0000","author":{"displayName":"Alice"}},
+		{"id":"12346","filename":"notes.txt","size":12}
+	]}}`)
+	atts, rawList, err := ParseIssueAttachments(raw)
+	if err != nil {
+		t.Fatalf("ParseIssueAttachments: %v", err)
+	}
+	if len(atts) != 2 {
+		t.Fatalf("got %d attachments, want 2", len(atts))
+	}
+	if atts[0].ID != "12345" || atts[0].Filename != "report.xlsx" || atts[0].Size != 133223 {
+		t.Errorf("first attachment decoded as %+v", atts[0])
+	}
+	if atts[0].Author == nil || atts[0].Author.DisplayName != "Alice" {
+		t.Errorf("author not decoded: %+v", atts[0].Author)
+	}
+	if !strings.Contains(string(rawList), `"filename":"report.xlsx"`) {
+		t.Errorf("raw list must be the server's own array, got %s", rawList)
+	}
+}
+
+func TestParseIssueAttachmentsWithoutAttachments(t *testing.T) {
+	for _, body := range []string{`{"key":"PROJ-1","fields":{}}`, `{"key":"PROJ-1","fields":{"attachment":null}}`, `{"key":"PROJ-1","fields":{"attachment":[]}}`} {
+		atts, rawList, err := ParseIssueAttachments([]byte(body))
+		if err != nil {
+			t.Fatalf("ParseIssueAttachments(%s): %v", body, err)
+		}
+		if len(atts) != 0 {
+			t.Errorf("%s: got %d attachments, want 0", body, len(atts))
+		}
+		if len(rawList) == 0 {
+			t.Errorf("%s: raw list must be an empty JSON array, got %q", body, rawList)
+		}
+	}
+}

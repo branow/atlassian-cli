@@ -12,7 +12,7 @@ import (
 // page (absent on the last page). Both the v2 spaces list and the v1 CQL
 // search envelopes carry this pair, so one page-following loop drives both.
 // The v1 search envelope also carries base/context naming the /wiki root that
-// its next link is relative to; see resolveNextPath. The result items are kept
+// its next link is relative to; see resolveLinkPath. The result items are kept
 // as raw JSON so the combined set can be re-emitted or re-parsed with the
 // endpoint's own typed decoder, losing no field.
 type pageEnvelope struct {
@@ -58,18 +58,20 @@ func CollectPages(firstPath string, limit int, paginate bool, fetch FetchPage) (
 		if !paginate {
 			break
 		}
-		path = resolveNextPath(env.Links.Next, env.Links.Base, env.Links.Context)
+		path = resolveLinkPath(env.Links.Next, env.Links.Base, env.Links.Context)
 	}
 	return items, nil
 }
 
-// resolveNextPath turns a page's _links.next into a post-host path the client
-// can join to its scheme+host base URL. The v2 endpoints return next already
-// rooted at the site (e.g. /wiki/api/v2/spaces?cursor=...), but the v1 search
-// API returns it relative to the /wiki context path (e.g. /rest/api/search?...)
-// with _links.base/_links.context naming that root. Without reconciling them
-// the /wiki prefix is dropped and the follow-up request 404s.
-func resolveNextPath(next, base, context string) string {
+// resolveLinkPath turns a link Confluence returns in a response — a page's
+// _links.next, an attachment's downloadLink — into a post-host path the
+// client can join to its scheme+host base URL. The v2 endpoints return such
+// links already rooted at the site (e.g. /wiki/api/v2/spaces?cursor=...),
+// but the v1 search API returns them relative to the /wiki context path
+// (e.g. /rest/api/search?...) with _links.base/_links.context naming that
+// root. Without reconciling them the /wiki prefix is dropped and the
+// follow-up request 404s.
+func resolveLinkPath(next, base, context string) string {
 	if next == "" {
 		return ""
 	}

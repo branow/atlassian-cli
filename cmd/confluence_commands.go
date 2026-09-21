@@ -16,6 +16,7 @@ func addConfluenceCommands(cmd *cobra.Command, f *cmdutil.Factory) {
 		newConfluencePageCmd(f),
 		newConfluenceSearchCmd(f),
 		newConfluenceAttachCmd(f),
+		newConfluenceAttachmentCmd(f),
 		newConfluenceCommentCmd(f),
 	)
 }

@@ -226,15 +226,28 @@ func runAPI(ctx context.Context, f *cmdutil.Factory, namespace, product, operati
 	}
 	resp, callErr := client.Do(ctx, method, path, query, body)
 	if resp != nil {
-		payload := resp.Body
-		if payload == nil {
-			payload = resp.Fields
-		}
-		if err := output.WriteJSON(f.IOStreams.Out, payload); err != nil {
+		if err := writeAPIResponse(f, resp); err != nil {
 			return err
 		}
 	}
 	return callErr
+}
+
+// writeAPIResponse emits one operation's response. A JSON body is
+// pretty-printed as before; a body the endpoint served as something else
+// (an attachment's bytes, an export, a thumbnail) is written verbatim, so
+// "atl api getAttachmentContent -f id=... > file" produces the file instead
+// of an error and an empty one.
+func writeAPIResponse(f *cmdutil.Factory, resp *atlapi.Response) error {
+	if resp.Binary {
+		_, err := f.IOStreams.Out.Write(resp.Raw)
+		return err
+	}
+	payload := resp.Body
+	if payload == nil {
+		payload = resp.Fields
+	}
+	return output.WriteJSON(f.IOStreams.Out, payload)
 }
 
 // buildRequestFields assembles the operation's request fields: -f/--field

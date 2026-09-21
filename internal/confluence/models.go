@@ -3,29 +3,15 @@ package confluence
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
+
+	"github.com/branow/atlassian-cli/internal/atlapi"
 )
 
-// FlexString decodes a JSON value that Confluence sometimes emits as a
-// string and sometimes as a number — content and space ids are the usual
-// culprits (v2 quotes them, some v1 shapes do not). It normalizes both to a
-// Go string so callers never have to care which the server chose.
-type FlexString string
-
-// UnmarshalJSON accepts a JSON string or number (or null) and stores its
-// textual form.
-func (f *FlexString) UnmarshalJSON(b []byte) error {
-	text := strings.TrimSpace(string(b))
-	if text == "null" {
-		*f = ""
-		return nil
-	}
-	*f = FlexString(strings.Trim(text, `"`))
-	return nil
-}
-
-// String returns the value as a plain Go string.
-func (f FlexString) String() string { return string(f) }
+// FlexString is the shared scalar-normalizing string from atlapi, aliased
+// here so the Confluence models keep reading as confluence.FlexString while
+// one definition serves both products (Jira has the same string-or-number
+// ids).
+type FlexString = atlapi.FlexString
 
 // Space is a Confluence space as returned by the v2 spaces endpoint, reduced
 // to the columns the `space ls` table shows.

@@ -3,6 +3,7 @@ package jira
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,4 +105,78 @@ func attachmentErrorMessage(body []byte) string {
 		text = text[:500]
 	}
 	return text
+}
+
+// AttachmentMetadataPath is the per-attachment metadata endpoint: filename,
+// size, media type, and the URL serving the bytes.
+const AttachmentMetadataPath = "/rest/api/3/attachment/%s"
+
+// AttachmentContentPath serves an attachment's bytes. Jira answers it with a
+// 303 to a short-lived presigned media URL rather than the bytes inline, so
+// a client must follow the redirect — and must not forward its Atlassian
+// credentials to the redirect target, which carries its own.
+const AttachmentContentPath = "/rest/api/3/attachment/content/%s"
+
+// Attachment is the subset of a Jira issue attachment the curated commands
+// render. It is the shape both the issue's fields.attachment array and the
+// standalone attachment endpoint return.
+type Attachment struct {
+	// ID is a FlexString because Jira spells it both ways: a string inside
+	// an issue's fields.attachment, a number from the attachment endpoint.
+	ID       atlapi.FlexString `json:"id"`
+	Filename string            `json:"filename"`
+	MimeType string            `json:"mimeType"`
+	Size     int64             `json:"size"`
+	Created  string            `json:"created"`
+	Author   *User             `json:"author"`
+	Content  string            `json:"content"`
+}
+
+// AttachmentColumns is the fixed table for `issue attachment list`.
+var AttachmentColumns = []Column[Attachment]{
+	{"ID", func(a Attachment) string { return a.ID.String() }},
+	{"FILENAME", func(a Attachment) string { return a.Filename }},
+	{"SIZE", func(a Attachment) string { return strconv.FormatInt(a.Size, 10) }},
+	{"TYPE", func(a Attachment) string { return a.MimeType }},
+	{"CREATED", func(a Attachment) string { return a.Created }},
+	{"AUTHOR", func(a Attachment) string { return userName(a.Author) }},
+}
+
+// issueAttachments is the sliver of an issue response the attachment list
+// reads: the attachment array nested under the fields envelope, kept as raw
+// JSON alongside the typed form so -o json can echo the server's own objects
+// instead of a lossy re-marshal.
+type issueAttachments struct {
+	Fields struct {
+		Attachment json.RawMessage `json:"attachment"`
+	} `json:"fields"`
+}
+
+// ParseIssueAttachments decodes the attachments of an issue fetched with
+// fields=attachment, returning both the typed list for the table and the
+// untouched array for -o json. An issue with no attachments yields an empty
+// list and an empty JSON array, not an error.
+func ParseIssueAttachments(raw []byte) ([]Attachment, []byte, error) {
+	var envelope issueAttachments
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, nil, fmt.Errorf("decoding issue attachments: %w", err)
+	}
+	rawList := []byte(envelope.Fields.Attachment)
+	if len(bytes.TrimSpace(rawList)) == 0 || string(bytes.TrimSpace(rawList)) == "null" {
+		return []Attachment{}, []byte("[]"), nil
+	}
+	var atts []Attachment
+	if err := json.Unmarshal(rawList, &atts); err != nil {
+		return nil, nil, fmt.Errorf("decoding issue attachments: %w", err)
+	}
+	return atts, rawList, nil
+}
+
+// ParseAttachment decodes a single attachment metadata response.
+func ParseAttachment(raw []byte) (*Attachment, error) {
+	var att Attachment
+	if err := json.Unmarshal(raw, &att); err != nil {
+		return nil, fmt.Errorf("decoding attachment: %w", err)
+	}
+	return &att, nil
 }
