@@ -34,12 +34,23 @@ homebrew_casks:
     # The binaries are not signed/notarized with an Apple Developer ID, so
     # strip the quarantine attribute Homebrew puts on cask downloads;
     # otherwise Gatekeeper refuses to run atl.
-    hooks:
-      post:
-        install: |
-          if File.executable?("/usr/bin/xattr")
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/atl"]
-          end
+    #
+    # Written as a custom_block because goreleaser's `hooks` still render the
+    # `postflight do` stanza Homebrew deprecated in favour of
+    # `postflight_steps` (goreleaser/goreleaser#6870).
+    #
+    # Inside postflight_steps the paths are declarative template tokens the
+    # installer expands, NOT Ruby: `#{staged_path}` would be interpolated at
+    # cask-load time against a DSL that has no such method, which makes the
+    # cask unreadable. The literal {{staged_path}} is what Homebrew wants, so
+    # it is wrapped in a goreleaser template string to survive goreleaser's
+    # own {{...}} expansion.
+    custom_block: |
+      postflight_steps do
+        if_path_exists "/usr/bin/xattr" do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/atl"]
+        end
+      end
 
 nfpms:
   - package_name: atl
