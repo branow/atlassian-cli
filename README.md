@@ -73,6 +73,8 @@ atl jira issue transition PROJ-123 --to "In Progress"
 atl jira issue comment PROJ-123 --body "on it"
 atl jira issue comment PROJ-123 --markdown --body "shipped in [PR](https://x/42), @[Jane Doe] please verify"
 atl jira issue attach PROJ-123 ./diagram.png
+atl jira issue attachment ls PROJ-123
+atl jira issue attachment download 12345 --out ./report.xlsx
 atl jira issue prs PROJ-123       # linked Bitbucket pull requests
 atl jira project ls
 atl jira board ls --project PROJ
@@ -89,8 +91,15 @@ atl confluence page patch 12345 --anchor release-notes --content notes.xml
 atl confluence page delete 12345          # to trash; --purge deletes permanently
 atl confluence search 'space = DS and type = page'
 atl confluence attach 12345 ./diagram.png
+atl confluence attachment ls 12345
+atl confluence attachment download att3564044322 --out ./data.xlsx
 atl confluence comment add 12345 --inline --select "the API" --body "which one?"
 ```
+
+`attachment download` writes the attachment's own filename into the working
+directory unless `--out` names a file or a directory; `--out -` streams the
+bytes to stdout. (`-o`/`--output` stays the global output format, so the
+destination flag is `--out`.)
 
 `page patch` takes exactly one selector — `--heading`, `--anchor`, or
 `--regex` (with `--replacement`) — and `--dry-run` prints the result instead
@@ -98,7 +107,10 @@ of saving.
 
 ## Scripting
 
-Add `-o json` to any command and rely on exit codes. List commands take
+Add `-o json` to any command and rely on exit codes. Operations that answer
+with bytes rather than JSON (`getAttachmentContent`,
+`getAttachmentThumbnail`) write those bytes verbatim, so `atl api` can be
+redirected straight into a file. List commands take
 `--limit` and `--paginate` (first page only unless `--paginate`). Log in
 non-interactively by reading the token from stdin:
 

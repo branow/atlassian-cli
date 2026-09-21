@@ -2,6 +2,7 @@ package atlapi
 
 import (
 	"encoding/json"
+	"mime"
 	"net/http"
 	"strings"
 )
@@ -17,6 +18,13 @@ type Response struct {
 	Body   any
 	Fields map[string]any
 	Raw    []byte
+	// ContentType is the response's declared media type, verbatim.
+	ContentType string
+	// Binary marks a 2xx response whose body is not JSON (an attachment's
+	// bytes, an export, a thumbnail). Body and Fields are empty for one;
+	// Raw holds what the server sent, and the caller is expected to write
+	// it out rather than render it as JSON.
+	Binary bool
 }
 
 // parseResponse decodes a REST response. Non-2xx statuses become *APIError
@@ -32,12 +40,26 @@ func parseResponse(statusCode int, header http.Header, body []byte) (*Response, 
 		}
 	}
 
-	resp := &Response{Status: statusCode, Raw: body}
+	contentType := ""
+	if header != nil {
+		contentType = header.Get("Content-Type")
+	}
+	resp := &Response{Status: statusCode, Raw: body, ContentType: contentType}
 	if len(body) == 0 {
 		resp.Fields = map[string]any{}
 		return resp, nil
 	}
 	if err := json.Unmarshal(body, &resp.Body); err != nil {
+		// A body the server never claimed was JSON is data, not a failure:
+		// attachment and export endpoints answer with the file's own media
+		// type, and decoding it as JSON is what used to turn a successful
+		// download into an error with nothing written. A body that claims
+		// to be JSON and is not remains a hard error.
+		if !isJSONContentType(contentType) {
+			resp.Binary = true
+			resp.Fields = map[string]any{}
+			return resp, nil
+		}
 		return nil, &APIError{Status: statusCode, Message: "response was not valid JSON", Raw: body}
 	}
 	switch v := resp.Body.(type) {
@@ -49,6 +71,22 @@ func parseResponse(statusCode int, header http.Header, body []byte) (*Response, 
 		resp.Fields = map[string]any{"value": v}
 	}
 	return resp, nil
+}
+
+// isJSONContentType reports whether a Content-Type promises JSON. An absent
+// or unparseable type counts as JSON: every Atlassian REST endpoint answers
+// in JSON, so an undeclared body that fails to decode is a broken response,
+// not a file.
+func isJSONContentType(contentType string) bool {
+	if strings.TrimSpace(contentType) == "" {
+		return true
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return true
+	}
+	mediaType = strings.ToLower(mediaType)
+	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json") || mediaType == "text/json"
 }
 
 // isRateLimited reports whether a non-2xx response is a throttling signal to

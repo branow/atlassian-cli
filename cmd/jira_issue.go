@@ -30,6 +30,7 @@ func newJiraIssueCmd(f *cmdutil.Factory) *cobra.Command {
 		newJiraIssueTransitionCmd(f),
 		newJiraIssueCommentCmd(f),
 		newJiraIssueAttachCmd(f),
+		newJiraIssueAttachmentCmd(f),
 		newJiraIssuePRsCmd(f),
 	)
 	return cmd
