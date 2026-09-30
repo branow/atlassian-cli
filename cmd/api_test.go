@@ -273,3 +273,89 @@ func TestAPIRejectsInvalidOutputFlag(t *testing.T) {
 		t.Errorf("got exit code %d, want %d", got, cmdutil.ExitValidation)
 	}
 }
+
+// "atl jira api v2" reaches the Jira REST v2 surface, whose wiki-markup
+// comment body is what renders an attached image or video inline.
+func TestAPIV2RoutesToRESTv2(t *testing.T) {
+	handler := &jsonHandler{body: `{"id": "10000"}`}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	f, _, _ := newTestFactory(t, server.URL)
+	root := cmd.NewRootCmd(f)
+	root.SetArgs([]string{"jira", "api", "v2", "addComment",
+		"-f", "issueIdOrKey=TEST-1", "-f", "body=!walkthrough.mp4!"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if handler.gotMethod != http.MethodPost || handler.gotPath != "/rest/api/2/issue/TEST-1/comment" {
+		t.Errorf("got %s %s, want POST /rest/api/2/issue/TEST-1/comment", handler.gotMethod, handler.gotPath)
+	}
+	if got := handler.gotBody["body"]; got != "!walkthrough.mp4!" {
+		t.Errorf("got body %v, want the wiki markup passed through verbatim", got)
+	}
+}
+
+// The same operationId under "atl jira api" must keep routing to v3, so
+// adding v2 changes nothing for callers who did not ask for it.
+func TestAPIV3UnaffectedByV2(t *testing.T) {
+	handler := &jsonHandler{body: `{"id": "10000"}`}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	f, _, _ := newTestFactory(t, server.URL)
+	root := cmd.NewRootCmd(f)
+	root.SetArgs([]string{"jira", "api", "addComment", "-f", "issueIdOrKey=TEST-1"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if handler.gotPath != "/rest/api/3/issue/TEST-1/comment" {
+		t.Errorf("got path %q, want /rest/api/3/issue/TEST-1/comment", handler.gotPath)
+	}
+}
+
+// --product pins v2 from the ordinary "atl jira api" command, the escape
+// hatch for callers already composing a --product call.
+func TestAPIV2ReachableByProductPin(t *testing.T) {
+	handler := &jsonHandler{body: `{"id": "10000"}`}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	f, _, _ := newTestFactory(t, server.URL)
+	root := cmd.NewRootCmd(f)
+	root.SetArgs([]string{"jira", "api", "addComment", "--product", "jira-v2", "-f", "issueIdOrKey=TEST-1"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if handler.gotPath != "/rest/api/2/issue/TEST-1/comment" {
+		t.Errorf("got path %q, want /rest/api/2/issue/TEST-1/comment", handler.gotPath)
+	}
+}
+
+func TestAPIV2ListAndDescribe(t *testing.T) {
+	f, out, _ := newTestFactory(t, "")
+	root := cmd.NewRootCmd(f)
+	root.SetArgs([]string{"jira", "api", "v2", "--list"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out.String(), "addComment") {
+		t.Error("expected the v2 operation list to contain addComment")
+	}
+
+	f, out, _ = newTestFactory(t, "")
+	root = cmd.NewRootCmd(f)
+	root.SetArgs([]string{"jira", "api", "v2", "addComment", "--describe"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out.String(), "/rest/api/2/issue/{issueIdOrKey}/comment") {
+		t.Errorf("got describe output %q, want the v2 path", out.String())
+	}
+	// The body is a wiki-markup string in v2; describing it with v3's ADF
+	// shape would send users back to hand-built media nodes.
+	if !strings.Contains(out.String(), "body                    string") {
+		t.Errorf("got describe output %q, want body typed as string", out.String())
+	}
+}

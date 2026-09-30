@@ -137,6 +137,28 @@ stdin) sends a full nested body. An operationId in more than one product
 (e.g. `getIssue`) is scoped by the namespaced `atl jira api` / `atl confluence
 api` or pinned with `--product`.
 
+#### Jira REST v2 (wiki markup)
+
+`atl jira api v2` invokes the same operations against `/rest/api/2`, which
+takes wiki markup where v3 takes ADF. That is the short path to evidence a
+person can actually see: Jira resolves `!name!` against the issue's own
+attachments, so an image or a video renders inline in the comment rather than
+sitting in the attachments panel under a filename.
+
+```sh
+atl jira issue attach PROJ-1 ./walkthrough.mp4
+atl jira api v2 addComment -f issueIdOrKey=PROJ-1 \
+  -f body='h3. Verified on dev
+
+!screenshot.png|thumbnail!
+!walkthrough.mp4!'
+```
+
+v2 shares almost every operationId with v3, so it stays out of `atl api` and
+`atl jira api` — reach it as `atl jira api v2 <operation>` or with
+`--product jira-v2`. `--list` and `--describe` work there too, and describe
+the v2 shapes (a comment body is a `string`, not an ADF document).
+
 Exit codes: `0` success · `1` generic / API business error (including 5xx that
 is not throttling, e.g. a suspended-site 503) · `2` cancelled · `3` validation
 (bad flags, unknown op) · `4` auth failure (401/403) · `5` not found (404) ·

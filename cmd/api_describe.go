@@ -27,31 +27,32 @@ func runAPIDescribe(f *cmdutil.Factory, namespace, product, operation string) er
 	out := f.IOStreams.Out
 	fmt.Fprintf(out, "%s  (product %s)\n  %s %s\n\n", op.ID, op.Product, op.Method, op.Path)
 	if len(op.PathParams) > 0 {
-		printSection(out, "Path parameters", op.PathParams, true)
+		printSection(out, op.Product, "Path parameters", op.PathParams, true)
 		fmt.Fprintln(out)
 	}
 	if len(op.Query) > 0 {
-		printSection(out, "Query parameters", op.Query, true)
+		printSection(out, op.Product, "Query parameters", op.Query, true)
 		fmt.Fprintln(out)
 	}
 	if len(op.Body) > 0 {
-		printSection(out, "Body", op.Body, true)
+		printSection(out, op.Product, "Body", op.Body, true)
 		fmt.Fprintln(out)
 	}
-	printSection(out, "Response", op.Response, false)
+	printSection(out, op.Product, "Response", op.Response, false)
 	return nil
 }
 
 // printSection prints one labelled field section, expanding nested
-// component types recursively. showRequired adds the required-or-optional
-// column, meaningful only for request fields.
-func printSection(w io.Writer, label string, fields []catalog.Field, showRequired bool) {
+// component types recursively as the operation's product documents them.
+// showRequired adds the required-or-optional column, meaningful only for
+// request fields.
+func printSection(w io.Writer, product, label string, fields []catalog.Field, showRequired bool) {
 	fmt.Fprintf(w, "  %s:\n", label)
 	if len(fields) == 0 {
 		fmt.Fprintln(w, "    (none)")
 		return
 	}
-	printFields(w, fields, "    ", showRequired, map[string]bool{})
+	printFields(w, product, fields, "    ", showRequired, map[string]bool{})
 }
 
 // printFields renders a block of sibling fields in aligned columns, then
@@ -59,7 +60,7 @@ func printSection(w io.Writer, label string, fields []catalog.Field, showRequire
 // indented one level deeper. expanding tracks the types open on the current
 // branch so a self-referential type does not recurse forever; sibling reuse
 // of a type still expands because the entry is cleared after the branch.
-func printFields(w io.Writer, fields []catalog.Field, indent string, showRequired bool, expanding map[string]bool) {
+func printFields(w io.Writer, product string, fields []catalog.Field, indent string, showRequired bool, expanding map[string]bool) {
 	nameW, typeW := 0, 0
 	for _, f := range fields {
 		nameW = max(nameW, len(f.Name))
@@ -76,9 +77,9 @@ func printFields(w io.Writer, fields []catalog.Field, indent string, showRequire
 		fmt.Fprintln(w, strings.TrimRight(line, " "))
 
 		base := strings.TrimSuffix(f.Type, "[]")
-		if nested, ok := catalog.LookupType(base); ok && !expanding[base] {
+		if nested, ok := catalog.LookupType(product, base); ok && !expanding[base] {
 			expanding[base] = true
-			printFields(w, nested, indent+"  ", showRequired, expanding)
+			printFields(w, product, nested, indent+"  ", showRequired, expanding)
 			delete(expanding, base)
 		}
 	}
@@ -118,10 +119,10 @@ func describeView(op catalog.Operation) map[string]any {
 		view["response"] = op.Response
 	}
 	types := map[string][]catalog.Field{}
-	collectReferencedTypes(op.PathParams, types)
-	collectReferencedTypes(op.Query, types)
-	collectReferencedTypes(op.Body, types)
-	collectReferencedTypes(op.Response, types)
+	collectReferencedTypes(op.Product, op.PathParams, types)
+	collectReferencedTypes(op.Product, op.Query, types)
+	collectReferencedTypes(op.Product, op.Body, types)
+	collectReferencedTypes(op.Product, op.Response, types)
 	if len(types) > 0 {
 		view["types"] = types
 	}
@@ -129,17 +130,18 @@ func describeView(op catalog.Operation) map[string]any {
 }
 
 // collectReferencedTypes walks fields and records the definition of every
-// catalogued component type they reference, recursing through nested types.
+// component type they reference as the operation's product documents it,
+// recursing through nested types.
 // The acc map both accumulates results and guards against cycles.
-func collectReferencedTypes(fields []catalog.Field, acc map[string][]catalog.Field) {
+func collectReferencedTypes(product string, fields []catalog.Field, acc map[string][]catalog.Field) {
 	for _, f := range fields {
 		base := strings.TrimSuffix(f.Type, "[]")
 		if _, seen := acc[base]; seen {
 			continue
 		}
-		if def, ok := catalog.LookupType(base); ok {
+		if def, ok := catalog.LookupType(product, base); ok {
 			acc[base] = def
-			collectReferencedTypes(def, acc)
+			collectReferencedTypes(product, def, acc)
 		}
 	}
 }

@@ -9,6 +9,16 @@
 // view. A top-level Lookup of an id present in several products is
 // reported as not-found so callers can steer the user to the namespaced
 // form (atl jira api / atl confluence api).
+//
+// Jira REST v2 ("jira-v2") is the same API surface as v3 under a different
+// path, so it shares nearly every operationId with "jira". Listing it
+// alongside would make almost the whole Jira catalog ambiguous, so it is an
+// opt-in product: the default and namespaced views never see it, and it is
+// reached only by naming it exactly (LookupIn("jira-v2", ...) behind "atl
+// jira api v2", or LookupProduct). Component schemas are likewise stored
+// per product, because v2 and v3 give the same schema name different
+// shapes -- a comment body is a wiki-markup string in v2 and an ADF
+// document in v3.
 package catalog
 
 import (
@@ -40,8 +50,8 @@ type Field struct {
 type Operation struct {
 	// ID is the operationId in its canonical (documented) casing.
 	ID string `json:"id"`
-	// Product is one of "jira", "jira-software", "confluence-v1",
-	// "confluence-v2".
+	// Product is one of "jira", "jira-v2", "jira-software",
+	// "confluence-v1", "confluence-v2".
 	Product string `json:"product"`
 	// Method is the upper-case HTTP method.
 	Method string `json:"method"`
@@ -63,11 +73,11 @@ type Operation struct {
 }
 
 // catalogFile is the on-disk shape of atlas-catalog.json: the operations as
-// a flat list (one entry per product binding) plus a registry of component
-// schemas used to expand nested field shapes.
+// a flat list (one entry per product binding) plus a per-product registry of
+// component schemas used to expand nested field shapes.
 type catalogFile struct {
-	Operations []Operation        `json:"operations"`
-	Types      map[string][]Field `json:"types,omitempty"`
+	Operations []Operation                   `json:"operations"`
+	Types      map[string]map[string][]Field `json:"types,omitempty"`
 }
 
 // productGroups maps a namespace (as used by "atl jira api" / "atl
@@ -78,11 +88,20 @@ var productGroups = map[string][]string{
 	"confluence": {"confluence-v1", "confluence-v2"},
 }
 
+// optInProducts are products excluded from the default views: they are
+// absent from Operations, Lookup, and Products, and from any namespace
+// group that does not name them. They exist because a product can mirror
+// another's whole operationId set (jira-v2 against jira), which would turn
+// every shared id ambiguous. Reach them by naming the product exactly.
+var optInProducts = map[string]bool{
+	"jira-v2": true,
+}
+
 var (
 	byLowerID   map[string][]Operation
 	canonicalID map[string]string
 	allIDs      []string
-	typeDefs    map[string][]Field
+	typeDefs    map[string]map[string][]Field
 )
 
 func init() {
@@ -97,16 +116,22 @@ func init() {
 		lower := strings.ToLower(op.ID)
 		byLowerID[lower] = append(byLowerID[lower], op)
 		canonicalID[lower] = op.ID
-		idSet[op.ID] = struct{}{}
+		if !optInProducts[op.Product] {
+			idSet[op.ID] = struct{}{}
+		}
 	}
 	allIDs = make([]string, 0, len(idSet))
 	for id := range idSet {
 		allIDs = append(allIDs, id)
 	}
 	sort.Strings(allIDs)
-	typeDefs = make(map[string][]Field, len(file.Types))
-	for name, fields := range file.Types {
-		typeDefs[strings.ToLower(name)] = fields
+	typeDefs = make(map[string]map[string][]Field, len(file.Types))
+	for product, types := range file.Types {
+		lowered := make(map[string][]Field, len(types))
+		for name, fields := range types {
+			lowered[strings.ToLower(name)] = fields
+		}
+		typeDefs[strings.ToLower(product)] = lowered
 	}
 }
 
@@ -120,15 +145,28 @@ func productsFor(namespace string) []string {
 }
 
 // Lookup returns the operation for id in the top-level (all-products) view,
-// matched case-insensitively. It reports not-found both for an unknown id
-// and for one that is ambiguous across products; use Products to tell the
-// two apart and LookupIn for a namespaced resolution.
+// matched case-insensitively. Opt-in products are not part of that view. It
+// reports not-found both for an unknown id and for one that is ambiguous
+// across products; use Products to tell the two apart and LookupIn for a
+// namespaced resolution.
 func Lookup(id string) (Operation, bool) {
-	ops := byLowerID[strings.ToLower(id)]
+	ops := defaultProductOps(byLowerID[strings.ToLower(id)])
 	if len(ops) == 1 {
 		return ops[0], true
 	}
 	return Operation{}, false
+}
+
+// defaultProductOps drops the operations belonging to an opt-in product,
+// which the default views never surface.
+func defaultProductOps(ops []Operation) []Operation {
+	out := make([]Operation, 0, len(ops))
+	for _, op := range ops {
+		if !optInProducts[op.Product] {
+			out = append(out, op)
+		}
+	}
+	return out
 }
 
 // LookupIn returns the operation for id restricted to a namespace's
@@ -173,10 +211,11 @@ func matchesIn(namespace, id string) []Operation {
 }
 
 // Products returns the distinct products defining id (top-level view),
-// sorted. An empty result means the id is unknown; more than one means it
-// is ambiguous and should be reached via a namespace.
+// sorted, excluding opt-in products. An empty result means the id is
+// unknown to that view; more than one means it is ambiguous and should be
+// reached via a namespace.
 func Products(id string) []string {
-	return distinctProducts(byLowerID[strings.ToLower(id)])
+	return distinctProducts(defaultProductOps(byLowerID[strings.ToLower(id)]))
 }
 
 // ProductsIn returns the distinct products defining id within a namespace,
@@ -199,7 +238,9 @@ func distinctProducts(ops []Operation) []string {
 }
 
 // Operations returns every operationId in canonical casing, sorted and
-// de-duplicated across products, for listing and shell completion.
+// de-duplicated across the default products, for listing and shell
+// completion. Ids that exist only in an opt-in product are absent; list
+// those with OperationsIn(<product>).
 func Operations() []string {
 	return allIDs
 }
@@ -228,11 +269,13 @@ func OperationsIn(namespace string) []string {
 }
 
 // LookupType returns the field list defining a component schema (e.g.
-// "IssueUpdateDetails"), matched case-insensitively, so a field typed as a
-// component can be expanded into its own fields. Opaque or unreferenced
-// types are absent.
-func LookupType(name string) ([]Field, bool) {
-	fields, ok := typeDefs[strings.ToLower(name)]
+// "IssueUpdateDetails") as the given product documents it, matched
+// case-insensitively, so a field typed as a component can be expanded into
+// its own fields. The product matters: jira and jira-v2 both define
+// "Comment", with an ADF body in one and a wiki-markup string in the other.
+// Opaque or unreferenced types are absent.
+func LookupType(product, name string) ([]Field, bool) {
+	fields, ok := typeDefs[strings.ToLower(product)][strings.ToLower(name)]
 	return fields, ok
 }
 

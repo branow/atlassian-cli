@@ -14,7 +14,7 @@ func newJiraCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:   "jira",
 		Short: "Work with Jira (Cloud platform + Jira Software)",
 	}
-	cmd.AddCommand(newAPICmd(f, "jira"))
+	cmd.AddCommand(newJiraAPICmd(f))
 	// Curated Jira subcommands are attached here (see cmd/jira_*.go).
 	addJiraCommands(cmd, f)
 	return cmd
