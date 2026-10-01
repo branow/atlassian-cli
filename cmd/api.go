@@ -17,12 +17,80 @@ import (
 	"github.com/branow/atlassian-cli/internal/output"
 )
 
-// newAPICmd builds an "api" command: a generic invoker for any catalogued
-// Atlassian operation, without a bespoke subcommand per operation. The
-// namespace scopes which products are searched: "" is the top-level view
-// over every product (and errors on cross-product ambiguity, pointing at a
-// namespaced form), "jira" spans jira + jira-software, and "confluence"
-// spans the v1 + v2 REST APIs.
+// apiScope is one namespace's command surface for the generic invoker: the
+// name it is invoked under, how its product reads in help text, the closing
+// paragraph that applies only to that scope, and its examples.
+type apiScope struct {
+	use     string
+	product string
+	tail    string
+	example string
+}
+
+// apiScopes describes every namespace newAPICmd can be built for. The
+// namespace also scopes which products are searched: "" is the top-level
+// view over every default product (and errors on cross-product ambiguity,
+// pointing at a namespaced form), "jira" spans jira + jira-software,
+// "confluence" spans the v1 + v2 REST APIs, and "jira-v2" is the opt-in
+// Jira REST v2 surface reached as "atl jira api v2".
+var apiScopes = map[string]apiScope{
+	"": {
+		use:     "api",
+		product: "Atlassian",
+		tail:    namespaceTail,
+		example: `  atl api getIssue -f issueIdOrKey=TEST-1
+  atl api createIssue --describe`,
+	},
+	"jira": {
+		use:     "api",
+		product: "Jira",
+		tail:    namespaceTail,
+		example: `  atl jira api createIssue --input issue.json
+  atl jira api getIssue -f issueIdOrKey=TEST-1
+  atl jira api --list`,
+	},
+	"confluence": {
+		use:     "api",
+		product: "Confluence",
+		tail:    namespaceTail,
+		example: `  atl confluence api getPageById -f id=12345
+  atl confluence api --list`,
+	},
+	"jira-v2": {
+		use:     "v2",
+		product: "Jira REST v2",
+		tail:    wikiMarkupTail,
+		example: `  atl jira api v2 addComment --input comment.json
+  atl jira api v2 addComment --describe
+  atl jira api v2 --list`,
+	},
+}
+
+// namespaceTail closes the help for the default scopes, where one
+// operationId can resolve to several products.
+const namespaceTail = `One operationId can exist in more than one product (e.g. getIssue in both
+Jira and Jira Software). The top-level "atl api" reports such ids as
+ambiguous and points to the namespaced form; "atl jira api" / "atl
+confluence api" scope the search.`
+
+// wikiMarkupTail closes the help for the v2 scope. v2 mirrors v3's
+// operations at /rest/api/2 and takes wiki markup where v3 takes ADF, which
+// is the reason to reach for it: Jira renders an attachment inline from its
+// filename, images and video alike, with no ADF media node to hand-build.
+const wikiMarkupTail = `Jira REST v2 mirrors v3's operations under /rest/api/2 and takes wiki
+markup where v3 takes ADF, so rich text is a plain string:
+
+  h2. Heading   *bold*   {code}...{code}
+  !diagram.png|thumbnail!          attachment rendered inline
+  !walkthrough.mp4!                attachment played inline
+
+Jira resolves those by filename against the issue's own attachments, so
+attach the file first (atl jira issue attach) and name it in the comment.
+Because v2 shares almost every operationId with v3, it is not part of "atl
+jira api" or "atl api"; reach it here or with --product jira-v2.`
+
+// newAPICmd builds the generic invoker for a namespace: any catalogued
+// Atlassian operation, without a bespoke subcommand per operation.
 func newAPICmd(f *cmdutil.Factory, namespace string) *cobra.Command {
 	var fields []string
 	var inputFile string
@@ -30,18 +98,15 @@ func newAPICmd(f *cmdutil.Factory, namespace string) *cobra.Command {
 	var describe bool
 	var productFlag string
 
-	product := "Atlassian"
-	switch namespace {
-	case "jira":
-		product = "Jira"
-	case "confluence":
-		product = "Confluence"
+	scope, ok := apiScopes[namespace]
+	if !ok {
+		panic("cmd: no api scope for namespace " + namespace)
 	}
 
 	cmd := &cobra.Command{
-		Use:   "api <operation>",
-		Short: fmt.Sprintf("Invoke a named %s REST API operation", product),
-		Long: fmt.Sprintf(`Invoke a named %s REST API operation against the active profile's site
+		Use:   scope.use + " <operation>",
+		Short: fmt.Sprintf("Invoke a named %s API operation", scope.product),
+		Long: fmt.Sprintf(`Invoke a named %s API operation against the active profile's site
 (e.g. getIssue, createIssue, getPageById). The operationId routes to its
 REST endpoint via the embedded catalog: path parameters are filled from
 matching fields, and the remaining fields become query parameters for
@@ -58,16 +123,9 @@ path/query/body/response fields — each with its type and, for request
 fields, whether it is required, with nested component types expanded inline
 (no credentials or network needed). Add -o json for a machine-readable shape.
 
-One operationId can exist in more than one product (e.g. getIssue in both
-Jira and Jira Software). The top-level "atl api" reports such ids as
-ambiguous and points to the namespaced form; "atl jira api" / "atl
-confluence api" scope the search.`, product),
-		Args: cobra.MaximumNArgs(1),
-		Example: `  atl api getIssue -f issueIdOrKey=TEST-1
-  atl jira api createIssue --input issue.json
-  atl confluence api getPageById -f id=12345
-  atl api createIssue --describe
-  atl jira api --list`,
+%s`, scope.product, scope.tail),
+		Args:    cobra.MaximumNArgs(1),
+		Example: scope.example,
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
 				return nil, cobra.ShellCompDirectiveNoFileComp
@@ -98,7 +156,17 @@ confluence api" scope the search.`, product),
 	cmd.Flags().StringVar(&inputFile, "input", "", `read request fields as a JSON object from a file ("-" for stdin)`)
 	cmd.Flags().BoolVar(&listOperations, "list", false, "list all catalogued operationIds in scope")
 	cmd.Flags().BoolVar(&describe, "describe", false, "print the operation's method, path, and documented fields")
-	cmd.Flags().StringVar(&productFlag, "product", "", "pin the product for an operationId defined in several (jira|jira-software|confluence-v1|confluence-v2)")
+	cmd.Flags().StringVar(&productFlag, "product", "", "pin the product for an operationId defined in several (jira|jira-v2|jira-software|confluence-v1|confluence-v2)")
+	return cmd
+}
+
+// newJiraAPICmd builds "atl jira api" with the opt-in v2 surface attached
+// as a subcommand. v2 is a sibling scope rather than another product in the
+// jira namespace because it mirrors nearly every v3 operationId, which
+// would make the whole Jira catalog ambiguous.
+func newJiraAPICmd(f *cmdutil.Factory) *cobra.Command {
+	cmd := newAPICmd(f, "jira")
+	cmd.AddCommand(newAPICmd(f, "jira-v2"))
 	return cmd
 }
 

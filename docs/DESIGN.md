@@ -49,9 +49,22 @@ the same escape-hatch shape as `gh api`.
   `atl jira api` / `atl confluence api`), the equivalent of `gh api`.
 - Refresh: `make specs` re-pulls specs; `make catalog` rebuilds the embedded catalog.
 
-Spec sizes: Jira ~420 paths, Jira Software ~78, Confluence v1 ~89 / v2 ~151, Bitbucket
-~193. The distilled catalog currently carries ~1,000 operations across jira,
-jira-software, confluence-v1, and confluence-v2.
+Spec sizes: Jira v3 ~420 paths, Jira v2 ~405, Jira Software ~78, Confluence v1 ~89 /
+v2 ~151, Bitbucket ~193. The distilled catalog currently carries ~1,680 operations
+across jira, jira-v2, jira-software, confluence-v1, and confluence-v2.
+
+**Opt-in products.** Jira REST v2 is the same surface as v3 under `/rest/api/2`,
+sharing nearly every operationId, so listing it beside v3 would make almost the whole
+Jira catalog ambiguous. It is therefore an *opt-in* product: absent from `atl api` and
+`atl jira api`, reached only by naming it — `atl jira api v2 <operation>`, or
+`--product jira-v2`. Adding it changed no existing lookup or count. It earns its place
+because v2 takes wiki markup where v3 takes ADF, and wiki markup is the only route
+that renders an attached **video** inline in a comment (`!clip.mp4!`); the ADF
+external-media node covers images only.
+
+Component schemas are stored **per product** for the same reason: v2 and v3 give the
+same schema name different shapes (a comment body is a `string` in v2, an ADF document
+in v3), so a flat registry would let whichever spec was read first describe both.
 
 ## The split (the whole point)
 

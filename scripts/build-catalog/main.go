@@ -6,10 +6,13 @@
 // It is deliberately dumb: it reads each spec generically as JSON, walks
 // paths/operations, and records each operation's method, full post-host
 // path, path/query parameters, flattened request-body and success-response
-// properties, plus a registry of the component schemas those fields
-// reference (one level of $ref following, transitively closed with a cycle
-// guard). The client stays schema-agnostic; all product knowledge lives in
-// the generated JSON.
+// properties, plus a per-product registry of the component schemas those
+// fields reference (one level of $ref following, transitively closed with a
+// cycle guard). The registry is keyed by product because two products can
+// define the same schema name with different shapes -- Jira v2's Comment
+// body is a wiki-markup string where v3's is an ADF document -- and a flat
+// registry would let whichever spec is read first describe both. The client
+// stays schema-agnostic; all product knowledge lives in the generated JSON.
 package main
 
 import (
@@ -29,6 +32,7 @@ type source struct {
 
 var sources = []source{
 	{"jira-cloud.v3.json", "jira"},
+	{"jira-cloud.v2.json", "jira-v2"},
 	{"jira-software.v3.json", "jira-software"},
 	{"confluence-cloud.v1.json", "confluence-v1"},
 	{"confluence-cloud.v2.json", "confluence-v2"},
@@ -64,8 +68,8 @@ type Operation struct {
 
 // catalogFile mirrors catalog.catalogFile.
 type catalogFile struct {
-	Operations []Operation        `json:"operations"`
-	Types      map[string][]Field `json:"types,omitempty"`
+	Operations []Operation                   `json:"operations"`
+	Types      map[string]map[string][]Field `json:"types,omitempty"`
 }
 
 func main() {
@@ -77,7 +81,7 @@ func main() {
 	outPath := filepath.Join(root, "internal", "atlapi", "catalog", "atlas-catalog.json")
 
 	var operations []Operation
-	types := map[string][]Field{}
+	types := map[string]map[string][]Field{}
 
 	for _, src := range sources {
 		spec, err := readSpec(filepath.Join(specsDir, src.file))
@@ -89,8 +93,10 @@ func main() {
 		bodyComps := namedComponents(spec, "requestBodies")
 		ops := distill(spec, src.product, comps, paramComps, bodyComps)
 		operations = append(operations, ops...)
-		collectTypes(ops, comps, types)
-		fmt.Printf("%-16s %4d operations\n", src.product, len(ops))
+		productTypes := map[string][]Field{}
+		collectTypes(ops, comps, productTypes)
+		types[src.product] = productTypes
+		fmt.Printf("%-16s %4d operations  %4d types\n", src.product, len(ops), len(productTypes))
 	}
 
 	// Stable, deterministic order: by product then operationId.
@@ -105,7 +111,11 @@ func main() {
 	if err := writeJSON(outPath, out); err != nil {
 		fatal(err)
 	}
-	fmt.Printf("wrote %d operations, %d types -> %s\n", len(operations), len(types), outPath)
+	total := 0
+	for _, productTypes := range types {
+		total += len(productTypes)
+	}
+	fmt.Printf("wrote %d operations, %d types across %d products -> %s\n", len(operations), total, len(types), outPath)
 }
 
 // distill turns one parsed spec into its product's operations, deduping

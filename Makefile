@@ -8,6 +8,7 @@ SPECS_DIR := specs
 ## specs: re-pull all Atlassian OpenAPI specs (see specs/SOURCES.md)
 specs:
 	curl -sL -o $(SPECS_DIR)/jira-cloud.v3.json       "https://developer.atlassian.com/cloud/jira/platform/swagger-v3.v3.json"
+	curl -sL -o $(SPECS_DIR)/jira-cloud.v2.json       "https://developer.atlassian.com/cloud/jira/platform/swagger.v3.json"
 	curl -sL -o $(SPECS_DIR)/jira-software.v3.json     "https://developer.atlassian.com/cloud/jira/software/swagger.v3.json"
 	curl -sL -o $(SPECS_DIR)/confluence-cloud.v1.json  "https://developer.atlassian.com/cloud/confluence/swagger.v3.json"
 	curl -sL -o $(SPECS_DIR)/confluence-cloud.v2.json  "https://developer.atlassian.com/cloud/confluence/openapi-v2.v3.json"

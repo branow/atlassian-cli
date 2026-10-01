@@ -126,15 +126,89 @@ func TestCataloguedOperationsAreWellFormed(t *testing.T) {
 }
 
 func TestLookupTypeResolvesComponentSchemas(t *testing.T) {
-	fields, ok := catalog.LookupType("IssueUpdateDetails")
+	fields, ok := catalog.LookupType("jira", "IssueUpdateDetails")
 	if !ok || len(fields) == 0 {
-		t.Fatalf("LookupType(IssueUpdateDetails) = %v, %v; want a non-empty definition", fields, ok)
+		t.Fatalf("LookupType(jira, IssueUpdateDetails) = %v, %v; want a non-empty definition", fields, ok)
 	}
-	if _, ok := catalog.LookupType("issueupdatedetails"); !ok {
-		t.Error("LookupType should match type names case-insensitively")
+	if _, ok := catalog.LookupType("JIRA", "issueupdatedetails"); !ok {
+		t.Error("LookupType should match product and type names case-insensitively")
 	}
-	if _, ok := catalog.LookupType("NotARealType"); ok {
+	if _, ok := catalog.LookupType("jira", "NotARealType"); ok {
 		t.Error("LookupType returned a definition for an unknown type")
+	}
+	if _, ok := catalog.LookupType("notAProduct", "IssueUpdateDetails"); ok {
+		t.Error("LookupType returned a definition for an unknown product")
+	}
+}
+
+// Two products can document the same schema name with different shapes: a
+// comment body is an ADF document in v3 and a wiki-markup string in v2. A
+// single flat registry would describe one of them wrongly, so the lookup is
+// scoped by product.
+func TestLookupTypeIsScopedByProduct(t *testing.T) {
+	v3, ok := catalog.LookupType("jira", "Comment")
+	if !ok {
+		t.Fatal("LookupType(jira, Comment) not found")
+	}
+	v2, ok := catalog.LookupType("jira-v2", "Comment")
+	if !ok {
+		t.Fatal("LookupType(jira-v2, Comment) not found")
+	}
+	v3Body, ok := findField(v3, "body")
+	if !ok {
+		t.Fatal("jira Comment has no body field")
+	}
+	v2Body, ok := findField(v2, "body")
+	if !ok {
+		t.Fatal("jira-v2 Comment has no body field")
+	}
+	if v2Body.Type != "string" {
+		t.Errorf("jira-v2 Comment.body type = %q, want string (wiki markup)", v2Body.Type)
+	}
+	if v3Body.Type == "string" {
+		t.Error("jira Comment.body typed as string; want the ADF document shape, not v2's")
+	}
+}
+
+// jira-v2 mirrors nearly every v3 operationId, so it must stay out of the
+// default views: adding it may not turn the Jira catalog ambiguous.
+func TestOptInProductIsAbsentFromDefaultViews(t *testing.T) {
+	op, ok := catalog.Lookup("addComment")
+	if !ok {
+		t.Fatal("Lookup(addComment) not found; jira-v2 should not make it ambiguous")
+	}
+	if op.Product != "jira" {
+		t.Errorf("Lookup(addComment) product = %q, want jira", op.Product)
+	}
+	if prods := catalog.Products("addComment"); len(prods) != 1 || prods[0] != "jira" {
+		t.Errorf("Products(addComment) = %v, want [jira]", prods)
+	}
+	if _, ok := catalog.LookupIn("jira", "addComment"); !ok {
+		t.Error("LookupIn(jira, addComment) not found; the jira namespace must not span jira-v2")
+	}
+	for _, id := range catalog.Operations() {
+		if op, ok := catalog.Lookup(id); ok && op.Product == "jira-v2" {
+			t.Fatalf("Operations() surfaced jira-v2 operation %s", id)
+		}
+	}
+}
+
+// Naming the product exactly is the way in, whether as a namespace (what
+// "atl jira api v2" passes) or as an explicit pin.
+func TestOptInProductResolvesWhenNamed(t *testing.T) {
+	op, ok := catalog.LookupIn("jira-v2", "addComment")
+	if !ok {
+		t.Fatal("LookupIn(jira-v2, addComment) not found")
+	}
+	if op.Path != "/rest/api/2/issue/{issueIdOrKey}/comment" {
+		t.Errorf("jira-v2 addComment path = %q, want the /rest/api/2 binding", op.Path)
+	}
+	pinned, ok := catalog.LookupProduct("jira-v2", "addComment")
+	if !ok || pinned.Path != op.Path {
+		t.Errorf("LookupProduct(jira-v2, addComment) = %+v, %v; want the same binding", pinned, ok)
+	}
+	if n := len(catalog.OperationsIn("jira-v2")); n < 500 {
+		t.Errorf("OperationsIn(jira-v2) = %d operations, want the full v2 surface", n)
 	}
 }
 
