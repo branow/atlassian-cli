@@ -18,6 +18,20 @@ published REST APIs by name.
 - **Free and open source** (MIT) — no per-seat license, no closed binary
   handling your tokens.
 
+## Why not Atlassian's CLI?
+
+Atlassian ships its own CLI, `acli`, and Appfire sells another under the same
+name. `atl` covers what they leave out:
+
+- **Confluence write access.** `acli` is built around Jira, and its Confluence
+  commands stop at listing and reading. `atl` creates, patches, deletes,
+  searches, comments on and attaches to pages.
+- **Every REST operation.** `atl api` calls any operation in Atlassian's
+  published Jira and Confluence specs by name, so a missing command is never a
+  dead end.
+- **Open source and free.** `acli` is a closed binary, and Appfire's ACLI is a
+  paid per-seat Marketplace app. `atl` is MIT.
+
 ## Installation
 
 ```sh
