@@ -24,7 +24,7 @@ Atlassian ships its own CLI, `acli`, and Appfire sells another under the same
 name. `atl` covers what they leave out:
 
 - **Confluence page editing.** `acli` manages spaces and blog posts, but its
-  only page command is `acli confluence page view` (as of `acli` 1.3.22).
+  only page command is `acli confluence page view` (as of `acli` 1.3.39).
   `atl` creates, patches, deletes, searches, comments on and attaches to
   pages.
 - **Every REST operation.** `acli` has no generic API command, so it can do
