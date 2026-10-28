@@ -23,14 +23,15 @@ published REST APIs by name.
 Atlassian ships its own CLI, `acli`, and Appfire sells another under the same
 name. `atl` covers what they leave out:
 
-- **Confluence write access.** `acli` is built around Jira, and its Confluence
-  commands stop at listing and reading. `atl` creates, patches, deletes,
-  searches, comments on and attaches to pages.
-- **Every REST operation.** `atl api` calls any operation in Atlassian's
-  published Jira and Confluence specs by name, so a missing command is never a
-  dead end.
-- **Open source and free.** `acli` is a closed binary, and Appfire's ACLI is a
-  paid per-seat Marketplace app. `atl` is MIT.
+- **Confluence page editing.** `acli` manages spaces and blog posts, but its
+  only page command is `acli confluence page view` (as of `acli` 1.3.22).
+  `atl` creates, patches, deletes, searches, comments on and attaches to
+  pages.
+- **Every REST operation.** `acli` has no generic API command, so it can do
+  only what its curated commands cover. `atl api` calls any operation in
+  Atlassian's published Jira and Confluence specs by name.
+- **Open source and free.** `acli` ships as a binary with no public source,
+  and Appfire's ACLI is a paid Marketplace app. `atl` is MIT.
 
 ## Installation
 
