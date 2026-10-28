@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -78,13 +79,14 @@ func fetchRaw(ctx context.Context, client atlapi.Client) confluence.FetchPage {
 
 // clientCredentials returns the stored credentials for the active profile,
 // mapping an absent entry to the shared not-logged-in error so the exit code
-// matches every other authenticated command.
+// matches every other authenticated command. Any other error (a keychain
+// entry this binary may not read) carries its own remedy, so it surfaces.
 func clientCredentials(f *cmdutil.Factory) (credentials.Credentials, error) {
 	creds, err := f.CredentialsStore.Get(f.ActiveProfile())
-	if err != nil {
+	if errors.Is(err, credentials.ErrNotFound) {
 		return credentials.Credentials{}, cmdutil.ErrNotLoggedIn
 	}
-	return creds, nil
+	return creds, err
 }
 
 // siteBaseURL turns a stored site host into a scheme+host base URL, rejecting

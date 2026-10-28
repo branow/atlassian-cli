@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
 
-	"github.com/zalando/go-keyring"
+	"github.com/branow/gokey"
 
 	"github.com/branow/atlassian-cli/internal/iostreams"
 )
@@ -15,33 +13,53 @@ import (
 const keyringService = "atlassian-cli"
 
 // KeyringStore persists credentials in the OS keychain, falling back to a
-// plaintext file and warning on stderr when no keychain backend is
-// available.
+// plaintext file and warning on stderr when the machine has no keychain.
 type KeyringStore struct {
 	streams  *iostreams.IOStreams
 	fallback *PlaintextStore
+
+	// prompt carries whether a call may raise the OS authorization
+	// dialog. It is decided once, where the terminal is known.
+	prompt gokey.Option
+
+	// The keychain calls are fields so tests drive every branch without
+	// touching the machine's real keychain.
+	get    func(service, account string, opts ...gokey.Option) (string, error)
+	set    func(service, account, secret string, opts ...gokey.Option) error
+	remove func(service, account string, opts ...gokey.Option) error
 }
 
 // NewKeyringStore returns a KeyringStore that warns via streams and falls
-// back to fallbackPath when the OS keychain is unavailable.
+// back to fallbackPath when the machine has no OS keychain. The keychain
+// may raise its authorization dialog only when a human is at the terminal:
+// unattended, a dialog nobody can see would hang the command instead of
+// failing it.
 func NewKeyringStore(streams *iostreams.IOStreams, fallbackPath string) *KeyringStore {
-	return &KeyringStore{streams: streams, fallback: NewPlaintextStore(fallbackPath)}
+	return &KeyringStore{
+		streams:  streams,
+		fallback: NewPlaintextStore(fallbackPath),
+		prompt:   gokey.WithPrompt(streams.CanPrompt()),
+		get:      gokey.Get,
+		set:      gokey.Set,
+		remove:   gokey.Delete,
+	}
 }
 
 // Get returns the stored credentials for profile. A profile absent from
 // the keychain is also looked up in the plaintext fallback — its entry may
 // have been written there while the keychain was unavailable.
 func (s *KeyringStore) Get(profile string) (Credentials, error) {
-	value, err := keyring.Get(keyringService, profile)
-	if errors.Is(err, keyring.ErrNotFound) {
+	value, err := s.get(keyringService, profile, s.prompt)
+	switch {
+	case errors.Is(err, gokey.ErrNotFound):
 		return s.fallback.Get(profile)
-	}
-	if err != nil {
-		if !safeToFallback(err) {
-			return Credentials{}, keychainError("reading", err)
-		}
+	case errors.Is(err, gokey.ErrBlocked):
+		return Credentials{}, blockedError("read", profile, err)
+	case errors.Is(err, gokey.ErrUnavailable):
 		s.warnFallback(err)
 		return s.fallback.Get(profile)
+	case err != nil:
+		return Credentials{}, err
 	}
 	return decodeCredentials(value)
 }
@@ -52,12 +70,14 @@ func (s *KeyringStore) Set(profile string, creds Credentials) error {
 	if err != nil {
 		return err
 	}
-	if err := keyring.Set(keyringService, profile, value); err != nil {
-		if !safeToFallback(err) {
-			return keychainError("storing", err)
-		}
+	switch err := s.set(keyringService, profile, value, s.prompt); {
+	case errors.Is(err, gokey.ErrBlocked):
+		return blockedError("replace", profile, err)
+	case errors.Is(err, gokey.ErrUnavailable):
 		s.warnFallback(err)
 		return s.fallback.Set(profile, creds)
+	case err != nil:
+		return err
 	}
 	return nil
 }
@@ -65,16 +85,16 @@ func (s *KeyringStore) Set(profile string, creds Credentials) error {
 // Delete removes the stored credentials for profile, from the plaintext
 // fallback when the keychain has no entry (see Get).
 func (s *KeyringStore) Delete(profile string) error {
-	err := keyring.Delete(keyringService, profile)
-	if errors.Is(err, keyring.ErrNotFound) {
+	switch err := s.remove(keyringService, profile, s.prompt); {
+	case errors.Is(err, gokey.ErrNotFound):
 		return s.fallback.Delete(profile)
-	}
-	if err != nil {
-		if !safeToFallback(err) {
-			return keychainError("deleting", err)
-		}
+	case errors.Is(err, gokey.ErrBlocked):
+		return blockedError("delete", profile, err)
+	case errors.Is(err, gokey.ErrUnavailable):
 		s.warnFallback(err)
 		return s.fallback.Delete(profile)
+	case err != nil:
+		return err
 	}
 	return nil
 }
@@ -83,23 +103,15 @@ func (s *KeyringStore) warnFallback(cause error) {
 	fmt.Fprintf(s.streams.ErrOut, "warning: OS keychain unavailable (%v); falling back to plaintext credential storage\n", cause)
 }
 
-// safeToFallback reports whether a keyring error is a safe cue to fall back
-// to the plaintext file. Only "no keychain backend on this platform" qualifies
-// by default: a backend that is present but errored (a locked keychain, a
-// denied permission prompt, a dbus hiccup) is transient, and silently writing
-// the API token to disk in that case would leak the secret unnoticed in a
-// scripted run. Setting ATL_ALLOW_PLAINTEXT_KEYRING=1 restores the old
-// fall-back-on-any-error behavior for users who want it.
-func safeToFallback(err error) bool {
-	if errors.Is(err, keyring.ErrUnsupportedPlatform) {
-		return true
-	}
-	v := os.Getenv("ATL_ALLOW_PLAINTEXT_KEYRING")
-	return v == "1" || strings.EqualFold(v, "true")
-}
-
-func keychainError(action string, cause error) error {
-	return fmt.Errorf("OS keychain error %s credentials (set ATL_ALLOW_PLAINTEXT_KEYRING=1 to fall back to plaintext file storage): %w", action, cause)
+// blockedError reports the one keychain failure the user can act on: the
+// entry exists but its access control does not name this binary, which is
+// what every entry written by the go-keyring versions of this CLI looks
+// like (they shelled out to /usr/bin/security). On a terminal the user can
+// approve the dialog; otherwise deleting the entry and logging in again
+// stores it under this binary's own identity.
+func blockedError(action, profile string, cause error) error {
+	return fmt.Errorf("cannot %s the keychain entry for profile %q: %w; approve the keychain prompt on an interactive terminal, or delete the entry with: security delete-generic-password -s %s -a %s, then run: atl auth login --profile %s",
+		action, profile, cause, keyringService, profile, profile)
 }
 
 func encodeCredentials(c Credentials) (string, error) {
