@@ -21,17 +21,24 @@ published REST APIs by name.
 ## Why not Atlassian's CLI?
 
 Atlassian ships its own CLI, `acli`, and Appfire sells another under the same
-name. `atl` covers what they leave out:
+name. `acli` covers Jira basics, but much everyday Jira and Confluence work has
+no `acli` command (checked against `acli` 1.3.39's `--help`):
 
-- **Confluence page editing.** `acli` manages spaces and blog posts, but its
-  only page command is `acli confluence page view` (as of `acli` 1.3.39).
-  `atl` creates, patches, deletes, searches, comments on and attaches to
-  pages.
-- **Every REST operation.** `acli` has no generic API command, so it can do
-  only what its curated commands cover. `atl api` calls any operation in
-  Atlassian's published Jira and Confluence specs by name.
-- **Open source and free.** `acli` ships as a binary with no public source,
-  and Appfire's ACLI is a paid Marketplace app. `atl` is MIT.
+| Task | `acli` | `atl` |
+| --- | --- | --- |
+| Set a custom field or priority on an existing issue | No; `workitem edit` sets only summary, description, assignee, labels and type | `atl jira issue edit PROJ-1 -f customfield_10010=…` |
+| Comment with Markdown, links and @mentions | Plain text or raw ADF JSON only | `atl jira issue comment --markdown` |
+| Upload a file to an issue | No; attachments can only be listed and deleted | `atl jira issue attach` |
+| Download an issue attachment | No | `atl jira issue attachment download` |
+| See the Bitbucket PRs linked to an issue | No | `atl jira issue prs` |
+| Create, edit or delete a Confluence page | No; the only page command is `view` | `atl confluence page create` / `patch` / `delete` |
+| Comment on a Confluence page, inline or not | No comment commands | `atl confluence comment add --inline --select` |
+| Search Confluence with CQL | No | `atl confluence search` |
+| Attach files to a Confluence page | No | `atl confluence attach` |
+| Call any other REST operation | No generic API command | `atl api <operationId>` |
+
+`acli` also ships as a binary with no public source, and Appfire's ACLI is a
+paid Marketplace app. `atl` is MIT.
 
 ## Installation
 
