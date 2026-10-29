@@ -2,6 +2,8 @@ package credentials
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -200,5 +202,36 @@ func TestKeyringReportsBlockedEntryWithoutFallingBack(t *testing.T) {
 	}
 	if errOut.Len() != 0 {
 		t.Errorf("stderr = %q, want no fallback warning", errOut.String())
+	}
+}
+
+// Entries written before the move to gokey carry go-keyring's macOS
+// encoding. They must still read, and are stored again as plain JSON.
+func TestKeyringReadsAndRewritesGoKeyringEntries(t *testing.T) {
+	plain, err := encodeCredentials(testCreds)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	legacy := map[string]string{
+		"base64": "go-keyring-base64:" + base64.StdEncoding.EncodeToString([]byte(plain)),
+		"hex":    "go-keyring-encoded:" + hex.EncodeToString([]byte(plain)),
+	}
+	for name, stored := range legacy {
+		t.Run(name, func(t *testing.T) {
+			keychain := newFakeKeychain()
+			keychain.items["default"] = stored
+			store, _, _ := newTestStore(t, keychain)
+
+			got, err := store.Get("default")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got != testCreds {
+				t.Errorf("got %+v, want %+v", got, testCreds)
+			}
+			if keychain.items["default"] != plain {
+				t.Errorf("stored %q after Get, want it rewritten as %q", keychain.items["default"], plain)
+			}
+		})
 	}
 }

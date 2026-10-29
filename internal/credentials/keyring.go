@@ -1,9 +1,12 @@
 package credentials
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/branow/gokey"
 
@@ -61,6 +64,20 @@ func (s *KeyringStore) Get(profile string) (Credentials, error) {
 	case err != nil:
 		return Credentials{}, err
 	}
+	if plain, legacy, err := decodeLegacy(value); legacy {
+		if err != nil {
+			return Credentials{}, fmt.Errorf("decoding keychain entry for profile %q: %w", profile, err)
+		}
+		creds, err := decodeCredentials(plain)
+		if err != nil {
+			return Credentials{}, err
+		}
+		// Store it again in the current layout. The rewrite also binds the
+		// item to this binary, so the next read raises no dialog; failing it
+		// costs only that, so the read still succeeds.
+		_ = s.Set(profile, creds)
+		return creds, nil
+	}
 	return decodeCredentials(value)
 }
 
@@ -112,6 +129,29 @@ func (s *KeyringStore) warnFallback(cause error) {
 func blockedError(action, profile string, cause error) error {
 	return fmt.Errorf("cannot %s the keychain entry for profile %q: %w; approve the keychain prompt on an interactive terminal, or delete the entry with: security delete-generic-password -s %s -a %s, then run: atl auth login --profile %s",
 		action, profile, cause, keyringService, profile, profile)
+}
+
+// The prefixes go-keyring put on every value it stored on macOS, which is
+// every entry written before atl moved to gokey. gokey returns the stored
+// bytes as they are, so they are decoded here.
+const (
+	legacyBase64Prefix = "go-keyring-base64:"
+	legacyHexPrefix    = "go-keyring-encoded:"
+)
+
+// decodeLegacy reports whether value is in go-keyring's macOS layout and, if
+// so, returns the value it encodes.
+func decodeLegacy(value string) (string, bool, error) {
+	trimmed := strings.TrimSpace(value)
+	if rest, ok := strings.CutPrefix(trimmed, legacyBase64Prefix); ok {
+		decoded, err := base64.StdEncoding.DecodeString(rest)
+		return string(decoded), true, err
+	}
+	if rest, ok := strings.CutPrefix(trimmed, legacyHexPrefix); ok {
+		decoded, err := hex.DecodeString(rest)
+		return string(decoded), true, err
+	}
+	return value, false, nil
 }
 
 func encodeCredentials(c Credentials) (string, error) {
