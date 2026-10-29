@@ -3,12 +3,32 @@ version: 2
 project_name: atl
 
 builds:
-  - main: .
+  - id: unix
+    main: .
     binary: atl
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin, windows]
+    goos: [linux, windows]
     goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/branow/atlassian-cli/cmd.version={{.Version}}
+
+  - id: macos
+    main: .
+    binary: atl
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    # Signed, not ad-hoc. gokey binds the stored API token to the code identity
+    # of the binary that stored it, and an ad-hoc signature has no certificate
+    # to anchor to - so the identity is the cdhash, which changes with every
+    # build. Users would re-authorize the keychain item on every upgrade.
+    # codesign needs macOS, so the release runs on a macOS runner.
+    hooks:
+      post:
+        - cmd: ./scripts/sign.sh "{{ .Path }}"
+          output: true
     ldflags:
       - -s -w -X github.com/branow/atlassian-cli/cmd.version={{.Version}}
 
@@ -31,9 +51,9 @@ homebrew_casks:
     directory: Casks
     homepage: https://github.com/branow/atlassian-cli
     description: Command-line interface for Atlassian Cloud (Jira + Confluence)
-    # The binaries are not signed/notarized with an Apple Developer ID, so
-    # strip the quarantine attribute Homebrew puts on cask downloads;
-    # otherwise Gatekeeper refuses to run atl.
+    # The binaries are signed with a self-signed certificate, not notarized
+    # with an Apple Developer ID, so strip the quarantine attribute Homebrew
+    # puts on cask downloads; otherwise Gatekeeper refuses to run atl.
     #
     # Written as a custom_block because goreleaser's `hooks` still render the
     # `postflight do` stanza Homebrew deprecated in favour of
@@ -54,6 +74,7 @@ homebrew_casks:
 
 nfpms:
   - package_name: atl
+    ids: [unix]
     formats: [deb, rpm, apk]
     maintainer: Orest Bodnar <branow.code@gmail.com>
     homepage: https://github.com/branow/atlassian-cli
