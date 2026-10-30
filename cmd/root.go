@@ -91,10 +91,9 @@ func newRealFactory() (*cmdutil.Factory, error) {
 // newClient constructs the real API client from the active profile's stored
 // credentials. The base URL is derived from the credentials' site host.
 func newClient(f *cmdutil.Factory) (atlapi.Client, error) {
-	profile := f.ActiveProfile()
-	creds, err := f.CredentialsStore.Get(profile)
+	creds, err := clientCredentials(f)
 	if err != nil {
-		return nil, cmdutil.ErrNotLoggedIn
+		return nil, err
 	}
 	baseURL, err := atlapi.BaseURL(creds.Site)
 	if err != nil {

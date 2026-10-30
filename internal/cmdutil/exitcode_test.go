@@ -6,6 +6,7 @@ import (
 
 	"github.com/branow/atlassian-cli/internal/atlapi"
 	"github.com/branow/atlassian-cli/internal/cmdutil"
+	"github.com/branow/atlassian-cli/internal/credentials"
 )
 
 func TestExitCode(t *testing.T) {
@@ -18,6 +19,7 @@ func TestExitCode(t *testing.T) {
 		{"generic", fmt.Errorf("boom"), cmdutil.ExitError},
 		{"cancelled", cmdutil.ErrCancelled, cmdutil.ExitCancelled},
 		{"not logged in", cmdutil.ErrNotLoggedIn, cmdutil.ExitAuth},
+		{"keychain needs approval", fmt.Errorf("wrapped: %w", credentials.ErrNeedsApproval), cmdutil.ExitAuth},
 		{"validation", &cmdutil.ValidationError{Message: "bad flag"}, cmdutil.ExitValidation},
 		{"api 401", &atlapi.APIError{Status: 401, Message: "unauthorized"}, cmdutil.ExitAuth},
 		{"api 403", &atlapi.APIError{Status: 403, Message: "forbidden"}, cmdutil.ExitAuth},

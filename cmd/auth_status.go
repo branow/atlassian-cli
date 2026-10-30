@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"sort"
 
 	"github.com/spf13/cobra"
 
 	"github.com/branow/atlassian-cli/internal/cmdutil"
+	"github.com/branow/atlassian-cli/internal/credentials"
 	"github.com/branow/atlassian-cli/internal/output"
 )
 
@@ -53,10 +55,14 @@ func runAuthStatus(f *cmdutil.Factory) error {
 	for _, name := range names {
 		// A profile present in config but without credentials is logged out;
 		// "auth status" reports authentication, so skip it rather than list a
-		// blank row.
+		// blank row. Any other error (a keychain entry this binary may not
+		// read) carries its own remedy, so it surfaces.
 		creds, err := f.CredentialsStore.Get(name)
-		if err != nil {
+		if errors.Is(err, credentials.ErrNotFound) {
 			continue
+		}
+		if err != nil {
+			return err
 		}
 		statuses = append(statuses, profileStatus{
 			Profile: name,

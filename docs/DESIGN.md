@@ -103,13 +103,17 @@ Module path `github.com/branow/atlassian-cli`; the binary built from `main.go` i
 
 Core packages: `cmdutil` (Factory pattern), `config`, `credentials` (keyring +
 fallback), `iostreams`, `output`, the cobra/root wiring, and the generic `api` command.
-Deps: `spf13/cobra`, `zalando/go-keyring`, `golang.org/x/term`, `gopkg.in/yaml.v3`.
+Deps: `spf13/cobra`, `branow/gokey`, `golang.org/x/term`, `gopkg.in/yaml.v3`.
 
 ## Auth model
 
 `atl auth login` prompts once for **site + email + API token** and stores the secret in
-the OS keychain (`zalando/go-keyring`: macOS Keychain / libsecret / Windows Credential
+the OS keychain (`branow/gokey`: macOS Keychain / libsecret / Windows Credential
 Manager), with a warned plaintext fallback (0600) only when no keychain backend exists.
+On macOS gokey calls Security.framework itself, so the item is bound to the `atl` binary
+and another process reading it raises an authorization dialog; the dialog is allowed only
+on an interactive terminal, and a blocked read fails with its remedy instead of falling
+back to the plaintext file.
 **No plaintext token in the config file.**
 
 Credentials are `{Site, Email, APIToken}`. Auth is HTTP Basic `email:APIToken` per
