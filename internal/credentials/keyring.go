@@ -74,8 +74,10 @@ func (s *KeyringStore) Get(profile string) (Credentials, error) {
 		}
 		// Store it again in the current layout. The rewrite also binds the
 		// item to this binary, so the next read raises no dialog; failing it
-		// costs only that, so the read still succeeds.
-		_ = s.Set(profile, creds)
+		// costs only that, so the read still succeeds with a warning.
+		if err := s.Set(profile, creds); err != nil {
+			fmt.Fprintf(s.streams.ErrOut, "warning: could not re-store the keychain entry for profile %q, so it will keep prompting: %v\n", profile, err)
+		}
 		return creds, nil
 	}
 	return decodeCredentials(value)
