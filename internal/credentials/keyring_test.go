@@ -21,11 +21,18 @@ import (
 type fakeKeychain struct {
 	items map[string]string
 	err   error
+
+	// foreign marks items another program owns, as /usr/bin/security owns
+	// every entry go-keyring wrote: set cannot replace them, and only
+	// dropLegacy removes them.
+	foreign map[string]bool
 }
 
 func newFakeKeychain() *fakeKeychain {
-	return &fakeKeychain{items: map[string]string{}}
+	return &fakeKeychain{items: map[string]string{}, foreign: map[string]bool{}}
 }
+
+var errOwnerEdit = errors.New("the keychain refused the request (OSStatus -25244)")
 
 func (k *fakeKeychain) get(_, account string, _ ...gokey.Option) (string, error) {
 	if k.err != nil {
@@ -41,6 +48,9 @@ func (k *fakeKeychain) get(_, account string, _ ...gokey.Option) (string, error)
 func (k *fakeKeychain) set(_, account, secret string, _ ...gokey.Option) error {
 	if k.err != nil {
 		return k.err
+	}
+	if k.foreign[account] {
+		return errOwnerEdit
 	}
 	k.items[account] = secret
 	return nil
@@ -65,7 +75,10 @@ func newTestStore(t *testing.T, keychain *fakeKeychain) (*KeyringStore, string, 
 	streams, _, _, errOut := iostreams.Test()
 	store := NewKeyringStore(streams, path)
 	store.get, store.set, store.remove = keychain.get, keychain.set, keychain.remove
-	store.dropLegacy = func(_, account string) error { return keychain.remove("", account) }
+	store.dropLegacy = func(_, account string) error {
+		delete(keychain.foreign, account)
+		return keychain.remove("", account)
+	}
 	return store, path, errOut
 }
 
@@ -174,7 +187,7 @@ func TestKeyringReportsUnexpectedKeychainFailures(t *testing.T) {
 
 // An entry the keychain holds but will not release is neither a missing
 // entry nor an unavailable keychain: reading or writing the plaintext file
-// instead would hide it, so every operation reports it with its remedy.
+// instead would hide it, so every operation says how to grant access.
 func TestKeyringReportsBlockedEntryWithoutFallingBack(t *testing.T) {
 	keychain := newFakeKeychain()
 	keychain.err = fmt.Errorf("%w (OSStatus -25308)", gokey.ErrBlocked)
@@ -188,10 +201,10 @@ func TestKeyringReportsBlockedEntryWithoutFallingBack(t *testing.T) {
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {
 			err := operation()
-			if !errors.Is(err, gokey.ErrBlocked) {
-				t.Fatalf("error = %v, want ErrBlocked", err)
+			if !errors.Is(err, ErrNeedsApproval) || !errors.Is(err, gokey.ErrBlocked) {
+				t.Fatalf("error = %v, want ErrNeedsApproval wrapping ErrBlocked", err)
 			}
-			for _, want := range []string{"security delete-generic-password -s atlassian-cli -a default", "atl auth login --profile default"} {
+			for _, want := range []string{`profile "default"`, `click "Allow"`, "atl auth status"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not mention %q", err, want)
 				}
@@ -221,7 +234,8 @@ func TestKeyringReadsAndRewritesGoKeyringEntries(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			keychain := newFakeKeychain()
 			keychain.items["default"] = stored
-			store, _, _ := newTestStore(t, keychain)
+			keychain.foreign["default"] = true
+			store, _, errOut := newTestStore(t, keychain)
 
 			got, err := store.Get("default")
 			if err != nil {
@@ -230,8 +244,11 @@ func TestKeyringReadsAndRewritesGoKeyringEntries(t *testing.T) {
 			if got != testCreds {
 				t.Errorf("got %+v, want %+v", got, testCreds)
 			}
-			if keychain.items["default"] != plain {
-				t.Errorf("stored %q after Get, want it rewritten as %q", keychain.items["default"], plain)
+			if keychain.items["default"] != plain || keychain.foreign["default"] {
+				t.Errorf("stored %q (foreign %v) after Get, want it rewritten as %q and owned by atl", keychain.items["default"], keychain.foreign["default"], plain)
+			}
+			if errOut.Len() != 0 {
+				t.Errorf("stderr = %q, want no warning", errOut.String())
 			}
 		})
 	}
@@ -246,6 +263,7 @@ func TestKeyringWarnsWhenLegacyEntryCannotBeReplaced(t *testing.T) {
 	}
 	keychain := newFakeKeychain()
 	keychain.items["default"] = "go-keyring-base64:" + base64.StdEncoding.EncodeToString([]byte(plain))
+	keychain.foreign["default"] = true
 	store, _, errOut := newTestStore(t, keychain)
 	store.dropLegacy = func(_, _ string) error { return errors.New("exit status 44") }
 
@@ -256,7 +274,27 @@ func TestKeyringWarnsWhenLegacyEntryCannotBeReplaced(t *testing.T) {
 	if got != testCreds {
 		t.Errorf("got %+v, want %+v", got, testCreds)
 	}
-	if !strings.Contains(errOut.String(), "will keep prompting") {
-		t.Errorf("stderr = %q, want a warning that it will keep prompting", errOut.String())
+	if !strings.Contains(errOut.String(), "will keep asking for permission") {
+		t.Errorf("stderr = %q, want a warning that macOS will keep asking", errOut.String())
+	}
+}
+
+// Logging in again over an entry an older atl wrote must replace it, not
+// fail on the keychain's owner check.
+func TestKeyringSetReplacesEntryAnotherProgramOwns(t *testing.T) {
+	keychain := newFakeKeychain()
+	keychain.items["default"] = "go-keyring-base64:b2xk"
+	keychain.foreign["default"] = true
+	store, _, _ := newTestStore(t, keychain)
+
+	if err := store.Set("default", testCreds); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	got, err := store.Get("default")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != testCreds {
+		t.Errorf("got %+v, want %+v", got, testCreds)
 	}
 }

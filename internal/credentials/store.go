@@ -27,3 +27,8 @@ type Store interface {
 // ErrNotFound indicates no credentials are stored for the requested
 // profile.
 var ErrNotFound = errors.New("no credentials stored for profile")
+
+// ErrNeedsApproval indicates the keychain holds credentials for the profile
+// but macOS has not yet allowed this atl binary to read them. Running any
+// command once in a terminal and clicking Allow grants it.
+var ErrNeedsApproval = errors.New("keychain access needs approval")

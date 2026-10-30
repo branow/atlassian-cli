@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/branow/atlassian-cli/internal/atlapi"
+	"github.com/branow/atlassian-cli/internal/credentials"
 )
 
 // Exit codes, per DESIGN.md's exit-code table.
@@ -26,7 +27,7 @@ func ExitCode(err error) int {
 	if errors.Is(err, ErrCancelled) {
 		return ExitCancelled
 	}
-	if errors.Is(err, ErrNotLoggedIn) {
+	if errors.Is(err, ErrNotLoggedIn) || errors.Is(err, credentials.ErrNeedsApproval) {
 		return ExitAuth
 	}
 	var validationErr *ValidationError
