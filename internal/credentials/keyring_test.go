@@ -23,8 +23,8 @@ type fakeKeychain struct {
 	err   error
 
 	// foreign marks items another program owns, as /usr/bin/security owns
-	// every entry go-keyring wrote: set cannot replace them, and only
-	// dropLegacy removes them.
+	// every entry go-keyring wrote: get releases them only with a prompt,
+	// set cannot replace them, and only dropLegacy removes them.
 	foreign map[string]bool
 }
 
@@ -34,9 +34,12 @@ func newFakeKeychain() *fakeKeychain {
 
 var errOwnerEdit = errors.New("the keychain refused the request (OSStatus -25244)")
 
-func (k *fakeKeychain) get(_, account string, _ ...gokey.Option) (string, error) {
+func (k *fakeKeychain) get(_, account string, prompt bool) (string, error) {
 	if k.err != nil {
 		return "", k.err
+	}
+	if k.foreign[account] && !prompt {
+		return "", gokey.ErrBlocked
 	}
 	value, ok := k.items[account]
 	if !ok {
@@ -45,7 +48,7 @@ func (k *fakeKeychain) get(_, account string, _ ...gokey.Option) (string, error)
 	return value, nil
 }
 
-func (k *fakeKeychain) set(_, account, secret string, _ ...gokey.Option) error {
+func (k *fakeKeychain) set(_, account, secret string, _ bool) error {
 	if k.err != nil {
 		return k.err
 	}
@@ -56,7 +59,7 @@ func (k *fakeKeychain) set(_, account, secret string, _ ...gokey.Option) error {
 	return nil
 }
 
-func (k *fakeKeychain) remove(_, account string, _ ...gokey.Option) error {
+func (k *fakeKeychain) remove(_, account string, _ bool) error {
 	if k.err != nil {
 		return k.err
 	}
@@ -68,16 +71,18 @@ func (k *fakeKeychain) remove(_, account string, _ ...gokey.Option) error {
 }
 
 // newTestStore returns a KeyringStore backed by keychain, its plaintext
-// fallback path, and the buffer its warnings go to.
+// fallback path, and the buffer its warnings go to. It runs as if at a
+// terminal, so a foreign entry is released after approval.
 func newTestStore(t *testing.T, keychain *fakeKeychain) (*KeyringStore, string, *bytes.Buffer) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "credentials.yml")
 	streams, _, _, errOut := iostreams.Test()
 	store := NewKeyringStore(streams, path)
+	store.canPrompt = true
 	store.get, store.set, store.remove = keychain.get, keychain.set, keychain.remove
 	store.dropLegacy = func(_, account string) error {
 		delete(keychain.foreign, account)
-		return keychain.remove("", account)
+		return keychain.remove("", account, false)
 	}
 	return store, path, errOut
 }
@@ -296,5 +301,53 @@ func TestKeyringSetReplacesEntryAnotherProgramOwns(t *testing.T) {
 	}
 	if got != testCreds {
 		t.Errorf("got %+v, want %+v", got, testCreds)
+	}
+}
+
+// An entry another atl build stored is released after approval, and must be
+// stored again by this binary: otherwise every later run asks again.
+func TestKeyringRebindsEntryThatNeededApproval(t *testing.T) {
+	plain, err := encodeCredentials(testCreds)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	keychain := newFakeKeychain()
+	keychain.items["default"] = plain
+	keychain.foreign["default"] = true
+	store, _, errOut := newTestStore(t, keychain)
+
+	got, err := store.Get("default")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != testCreds {
+		t.Errorf("got %+v, want %+v", got, testCreds)
+	}
+	if keychain.foreign["default"] {
+		t.Error("entry still owned by another program after an approved read")
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("stderr = %q, want no warning", errOut.String())
+	}
+}
+
+// With no terminal there is no one to approve, so the read stops with the
+// approval error and leaves the entry alone.
+func TestKeyringAsksForApprovalWithoutATerminal(t *testing.T) {
+	plain, err := encodeCredentials(testCreds)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	keychain := newFakeKeychain()
+	keychain.items["default"] = plain
+	keychain.foreign["default"] = true
+	store, _, _ := newTestStore(t, keychain)
+	store.canPrompt = false
+
+	if _, err := store.Get("default"); !errors.Is(err, ErrNeedsApproval) {
+		t.Fatalf("Get error = %v, want ErrNeedsApproval", err)
+	}
+	if !keychain.foreign["default"] {
+		t.Error("entry replaced without approval")
 	}
 }

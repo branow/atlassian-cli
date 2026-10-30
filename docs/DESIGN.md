@@ -113,7 +113,9 @@ Manager), with a warned plaintext fallback (0600) only when no keychain backend 
 On macOS gokey calls Security.framework itself, so the item is bound to the `atl` binary
 and another process reading it raises an authorization dialog; the dialog is allowed only
 on an interactive terminal, and a blocked read fails with its remedy instead of falling
-back to the plaintext file.
+back to the plaintext file. Release builds have no Apple Team ID, so macOS partitions the
+item by cdhash and the first read after each upgrade raises the dialog once; an approved
+read stores the item again under the new build.
 **No plaintext token in the config file.**
 
 Credentials are `{Site, Email, APIToken}`. Auth is HTTP Basic `email:APIToken` per

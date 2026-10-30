@@ -20,11 +20,9 @@ builds:
       - CGO_ENABLED=0
     goos: [darwin]
     goarch: [amd64, arm64]
-    # Signed, not ad-hoc. gokey binds the stored API token to the code identity
-    # of the binary that stored it, and an ad-hoc signature has no certificate
-    # to anchor to - so the identity is the cdhash, which changes with every
-    # build. Users would re-authorize the keychain item on every upgrade.
-    # codesign needs macOS, so the release runs on a macOS runner.
+    # Signed with the release certificate; see scripts/sign.sh for what it
+    # does and does not keep across upgrades. codesign needs macOS, so the
+    # release runs on a macOS runner.
     hooks:
       post:
         - cmd: ./scripts/sign.sh "{{ .Path }}"
