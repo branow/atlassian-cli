@@ -65,6 +65,7 @@ func newTestStore(t *testing.T, keychain *fakeKeychain) (*KeyringStore, string, 
 	streams, _, _, errOut := iostreams.Test()
 	store := NewKeyringStore(streams, path)
 	store.get, store.set, store.remove = keychain.get, keychain.set, keychain.remove
+	store.dropLegacy = func(_, account string) error { return keychain.remove("", account) }
 	return store, path, errOut
 }
 
@@ -233,5 +234,29 @@ func TestKeyringReadsAndRewritesGoKeyringEntries(t *testing.T) {
 				t.Errorf("stored %q after Get, want it rewritten as %q", keychain.items["default"], plain)
 			}
 		})
+	}
+}
+
+// The legacy entry could not be removed: the read still succeeds, and the
+// warning says it will keep prompting rather than failing silently.
+func TestKeyringWarnsWhenLegacyEntryCannotBeReplaced(t *testing.T) {
+	plain, err := encodeCredentials(testCreds)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	keychain := newFakeKeychain()
+	keychain.items["default"] = "go-keyring-base64:" + base64.StdEncoding.EncodeToString([]byte(plain))
+	store, _, errOut := newTestStore(t, keychain)
+	store.dropLegacy = func(_, _ string) error { return errors.New("exit status 44") }
+
+	got, err := store.Get("default")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != testCreds {
+		t.Errorf("got %+v, want %+v", got, testCreds)
+	}
+	if !strings.Contains(errOut.String(), "will keep prompting") {
+		t.Errorf("stderr = %q, want a warning that it will keep prompting", errOut.String())
 	}
 }

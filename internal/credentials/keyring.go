@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/branow/gokey"
@@ -30,6 +31,9 @@ type KeyringStore struct {
 	get    func(service, account string, opts ...gokey.Option) (string, error)
 	set    func(service, account, secret string, opts ...gokey.Option) error
 	remove func(service, account string, opts ...gokey.Option) error
+
+	// dropLegacy deletes an entry go-keyring wrote; see migrate.
+	dropLegacy func(service, account string) error
 }
 
 // NewKeyringStore returns a KeyringStore that warns via streams and falls
@@ -45,6 +49,8 @@ func NewKeyringStore(streams *iostreams.IOStreams, fallbackPath string) *Keyring
 		get:      gokey.Get,
 		set:      gokey.Set,
 		remove:   gokey.Delete,
+
+		dropLegacy: deleteWithSecurityTool,
 	}
 }
 
@@ -72,12 +78,7 @@ func (s *KeyringStore) Get(profile string) (Credentials, error) {
 		if err != nil {
 			return Credentials{}, err
 		}
-		// Store it again in the current layout. The rewrite also binds the
-		// item to this binary, so the next read raises no dialog; failing it
-		// costs only that, so the read still succeeds with a warning.
-		if err := s.Set(profile, creds); err != nil {
-			fmt.Fprintf(s.streams.ErrOut, "warning: could not re-store the keychain entry for profile %q, so it will keep prompting: %v\n", profile, err)
-		}
+		s.migrate(profile, creds)
 		return creds, nil
 	}
 	return decodeCredentials(value)
@@ -114,6 +115,33 @@ func (s *KeyringStore) Delete(profile string) error {
 		return s.fallback.Delete(profile)
 	case err != nil:
 		return err
+	}
+	return nil
+}
+
+// migrate stores a legacy entry again as plain JSON bound to this binary, so
+// the next read raises no dialog. The keychain will not let this binary
+// replace an item another program owns (errSecInvalidOwnerEdit), so the
+// old item is first deleted by its owner, /usr/bin/security; deleting needs
+// no authorization. Failing costs only the dialog on later reads, so it
+// warns instead of failing the read.
+func (s *KeyringStore) migrate(profile string, creds Credentials) {
+	if err := s.dropLegacy(keyringService, profile); err != nil {
+		fmt.Fprintf(s.streams.ErrOut, "warning: could not replace the old keychain entry for profile %q, so it will keep prompting: %v\n", profile, err)
+		return
+	}
+	if err := s.Set(profile, creds); err != nil {
+		fmt.Fprintf(s.streams.ErrOut, "warning: removed the old keychain entry for profile %q but could not store it again (%v); run: atl auth login --profile %s\n", profile, err, profile)
+	}
+}
+
+// deleteWithSecurityTool deletes an item through /usr/bin/security, the
+// owner of every entry go-keyring wrote. Only the item's address is passed,
+// never its secret.
+func deleteWithSecurityTool(service, account string) error {
+	out, err := exec.Command("/usr/bin/security", "delete-generic-password", "-s", service, "-a", account).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("security delete-generic-password: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
