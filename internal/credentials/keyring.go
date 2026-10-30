@@ -22,33 +22,38 @@ type KeyringStore struct {
 	streams  *iostreams.IOStreams
 	fallback *PlaintextStore
 
-	// prompt carries whether a call may raise the OS authorization
-	// dialog. It is decided once, where the terminal is known.
-	prompt gokey.Option
+	// canPrompt is whether a call may raise the OS authorization dialog:
+	// only when a human is at the terminal. Unattended, a dialog nobody can
+	// see would hang the command instead of failing it.
+	canPrompt bool
 
 	// The keychain calls are fields so tests drive every branch without
-	// touching the machine's real keychain.
-	get    func(service, account string, opts ...gokey.Option) (string, error)
-	set    func(service, account, secret string, opts ...gokey.Option) error
-	remove func(service, account string, opts ...gokey.Option) error
+	// touching the machine's real keychain. prompt is whether that one call
+	// may raise the dialog.
+	get    func(service, account string, prompt bool) (string, error)
+	set    func(service, account, secret string, prompt bool) error
+	remove func(service, account string, prompt bool) error
 
-	// dropLegacy deletes an entry go-keyring wrote; see Set.
+	// dropLegacy deletes an entry another program owns; see Set.
 	dropLegacy func(service, account string) error
 }
 
 // NewKeyringStore returns a KeyringStore that warns via streams and falls
-// back to fallbackPath when the machine has no OS keychain. The keychain
-// may raise its authorization dialog only when a human is at the terminal:
-// unattended, a dialog nobody can see would hang the command instead of
-// failing it.
+// back to fallbackPath when the machine has no OS keychain.
 func NewKeyringStore(streams *iostreams.IOStreams, fallbackPath string) *KeyringStore {
 	return &KeyringStore{
-		streams:  streams,
-		fallback: NewPlaintextStore(fallbackPath),
-		prompt:   gokey.WithPrompt(streams.CanPrompt()),
-		get:      gokey.Get,
-		set:      gokey.Set,
-		remove:   gokey.Delete,
+		streams:   streams,
+		fallback:  NewPlaintextStore(fallbackPath),
+		canPrompt: streams.CanPrompt(),
+		get: func(service, account string, prompt bool) (string, error) {
+			return gokey.Get(service, account, gokey.WithPrompt(prompt))
+		},
+		set: func(service, account, secret string, prompt bool) error {
+			return gokey.Set(service, account, secret, gokey.WithPrompt(prompt))
+		},
+		remove: func(service, account string, prompt bool) error {
+			return gokey.Delete(service, account, gokey.WithPrompt(prompt))
+		},
 
 		dropLegacy: deleteWithSecurityTool,
 	}
@@ -58,7 +63,14 @@ func NewKeyringStore(streams *iostreams.IOStreams, fallbackPath string) *Keyring
 // the keychain is also looked up in the plaintext fallback — its entry may
 // have been written there while the keychain was unavailable.
 func (s *KeyringStore) Get(profile string) (Credentials, error) {
-	value, err := s.get(keyringService, profile, s.prompt)
+	// Read silently first: an entry this binary owns needs no dialog, and
+	// only a refusal tells that it does not.
+	value, err := s.get(keyringService, profile, false)
+	approved := false
+	if errors.Is(err, gokey.ErrBlocked) && s.canPrompt {
+		value, err = s.get(keyringService, profile, true)
+		approved = err == nil
+	}
 	switch {
 	case errors.Is(err, gokey.ErrNotFound):
 		return s.fallback.Get(profile)
@@ -70,18 +82,21 @@ func (s *KeyringStore) Get(profile string) (Credentials, error) {
 	case err != nil:
 		return Credentials{}, err
 	}
-	if plain, legacy, err := decodeLegacy(value); legacy {
-		if err != nil {
-			return Credentials{}, fmt.Errorf("decoding keychain entry for profile %q: %w", profile, err)
-		}
-		creds, err := decodeCredentials(plain)
-		if err != nil {
-			return Credentials{}, err
-		}
-		s.migrate(profile, creds)
-		return creds, nil
+	plain, legacy, err := decodeLegacy(value)
+	if err != nil {
+		return Credentials{}, fmt.Errorf("decoding keychain entry for profile %q: %w", profile, err)
 	}
-	return decodeCredentials(value)
+	creds, err := decodeCredentials(plain)
+	if err != nil {
+		return Credentials{}, err
+	}
+	// An entry that needed approval belongs to another program - an older
+	// atl, another build of it - and would ask again on every run until it
+	// is stored again by this one.
+	if legacy || approved {
+		s.migrate(profile, creds)
+	}
+	return creds, nil
 }
 
 // Set stores creds for profile, overwriting any existing entry.
@@ -90,14 +105,14 @@ func (s *KeyringStore) Set(profile string, creds Credentials) error {
 	if err != nil {
 		return err
 	}
-	err = s.set(keyringService, profile, value, s.prompt)
+	err = s.set(keyringService, profile, value, s.canPrompt)
 	if err != nil && !errors.Is(err, gokey.ErrBlocked) && !errors.Is(err, gokey.ErrUnavailable) {
 		// The keychain will not let this binary replace an item another
 		// program owns (errSecInvalidOwnerEdit) - every entry an older atl
 		// wrote through /usr/bin/security. Its owner deletes it without
 		// asking, and the new item is then bound to this binary.
 		if s.dropLegacy(keyringService, profile) == nil {
-			err = s.set(keyringService, profile, value, s.prompt)
+			err = s.set(keyringService, profile, value, s.canPrompt)
 		}
 	}
 	switch {
@@ -115,7 +130,7 @@ func (s *KeyringStore) Set(profile string, creds Credentials) error {
 // Delete removes the stored credentials for profile, from the plaintext
 // fallback when the keychain has no entry (see Get).
 func (s *KeyringStore) Delete(profile string) error {
-	switch err := s.remove(keyringService, profile, s.prompt); {
+	switch err := s.remove(keyringService, profile, s.canPrompt); {
 	case errors.Is(err, gokey.ErrNotFound):
 		return s.fallback.Delete(profile)
 	case errors.Is(err, gokey.ErrBlocked):
@@ -129,8 +144,8 @@ func (s *KeyringStore) Delete(profile string) error {
 	return nil
 }
 
-// migrate stores a legacy entry again as plain JSON bound to this binary
-// (see Set), so the next read raises no dialog. Failing costs only that
+// migrate stores an entry another program owns again, as plain JSON bound
+// to this binary (see Set), so the next read raises no dialog. Failing costs only that
 // dialog on later reads, so it warns instead of failing the read.
 func (s *KeyringStore) migrate(profile string, creds Credentials) {
 	if err := s.Set(profile, creds); err != nil {

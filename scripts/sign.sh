@@ -1,15 +1,14 @@
 #!/bin/sh
-# Sign a macOS build so the keychain keeps trusting it across upgrades.
+# Sign a macOS build with the release certificate.
 #
 # gokey binds the stored API token to the code identity of the binary that
-# stored it. Go ad-hoc signs by default, and an ad-hoc signature has no
-# certificate to anchor to, so the identity falls back to the binary's cdhash -
-# which is different for every build. Every upgrade would then raise the
-# keychain dialog again, and a scripted run would fail until someone approved it.
-#
-# A certificate fixes it. Signed, the designated requirement becomes the
-# identifier plus the certificate, with no cdhash in it, so any later build
-# signed by the same certificate satisfies the same requirement.
+# stored it. Signed, the item's access list names the identifier plus the
+# certificate instead of a cdhash, so it survives upgrades. The keychain's
+# partition list does not: without an Apple Developer ID there is no Team ID,
+# so macOS partitions the item by cdhash, and the first read after an upgrade
+# still raises one dialog per profile. KeyringStore stores the entry again
+# after that approval, so it is once per upgrade. Only a Developer ID
+# certificate (a teamid partition) removes it.
 #
 #   ATL_SIGN_IDENTITY  the identity to sign with: a name or SHA-1 hash as
 #                      `security find-identity -p codesigning` prints it.
